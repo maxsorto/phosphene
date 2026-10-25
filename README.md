@@ -2,7 +2,7 @@
 
 # phosphene
 
-A psychedelic audio visualizer that runs in your browser. Five GPU shader worlds (fractals, a wormhole, liquid light, a spectral mandala and a raymarched lattice) that move with whatever you are listening to: Spotify in a browser tab, YouTube, your microphone or a local file.
+A psychedelic audio visualizer that runs in your browser. Ten GPU shader worlds (fractals, a wormhole, liquid light, a raymarched lattice, warp-speed stars, op-art, a synthwave horizon and more) that move with whatever you are listening to: Spotify in a browser tab, YouTube, your microphone or a local file.
 
 <p align="center"><b>Open it: <a href="LIVE_URL">LIVE_HOST</a></b><br>Desktop Chrome, Edge or Arc for tab audio. Phones work with the mic.</p>
 
@@ -19,7 +19,15 @@ No install, no account, no build step. Everything runs on your device and no aud
   </tr>
   <tr>
     <td><img src="docs/images/scene-gyroid.jpg" alt="05 Gyroid Flight"></td>
-    <td><img src="docs/images/dock.jpg" alt="The player dock"></td>
+    <td><img src="docs/images/scene-julia.jpg" alt="06 Julia Bloom"></td>
+  </tr>
+  <tr>
+    <td><img src="docs/images/scene-hyperspace.jpg" alt="07 Hyperspace"></td>
+    <td><img src="docs/images/scene-moire.jpg" alt="08 Moire"></td>
+  </tr>
+  <tr>
+    <td><img src="docs/images/scene-horizon.jpg" alt="09 Neon Horizon"></td>
+    <td><img src="docs/images/scene-pulsar.jpg" alt="10 Pulsar"></td>
   </tr>
 </table>
 
@@ -32,6 +40,11 @@ No install, no account, no build step. Everything runs on your device and no aud
 | 03 | Liquid Dream | Three layers of domain-warped fractal noise | Flow offset on the bass, highlights on the highs |
 | 04 | Spectral Mandala | Fourteen rings, one per frequency band | Each ring's wobble is its band's energy |
 | 05 | Gyroid Flight | Raymarched gyroid lattice with a carved flight path | Wall thickness on the bass, glow along the spectrum |
+| 06 | Julia Bloom | Julia set whose parameter traces the edge of the Mandelbrot cardioid | The mids push the shape, the bass breathes the zoom |
+| 07 | Hyperspace | Three layers of star streaks in polar space | Warp speed and streak length on the bass |
+| 08 | Moiré | Two drifting ring fields multiplied into op-art interference | Ring density on the mids, color on the highs |
+| 09 | Neon Horizon | Perspective grid flyover, striped sun, spectrum skyline | The skyline is the spectrum, the sun pulses on the kick |
+| 10 | Pulsar | 42 ridgelines with hidden-line removal, after the 1979 pulsar plot | Each line is the spectrum from a moment ago, so the past scrolls back |
 
 Every scene draws into a feedback buffer. Each frame the previous image is zoomed, swirled and hue-shifted a little before the new one is laid on top, which is where the trails and the melting come from. Kicks punch the zoom and split the color channels.
 
@@ -42,6 +55,9 @@ Every scene draws into a feedback buffer. Each frame the previous image is zoome
     <td width="50%"><img src="docs/images/welcome.jpg" alt="Choose an audio source"></td>
     <td width="50%"><img src="docs/images/settings.jpg" alt="Settings"></td>
   </tr>
+  <tr>
+    <td colspan="2"><img src="docs/images/dock.jpg" alt="The player dock"></td>
+  </tr>
 </table>
 
 Pick a source on the first screen:
@@ -51,7 +67,7 @@ Pick a source on the first screen:
 - **Audio file**. Pick or drag in an MP3, WAV, FLAC or M4A. It plays through your speakers with a scrub bar.
 - **Just watch**. A built-in silent beat, no permissions needed.
 
-Keyboard: `1` to `5` jump to a scene, `←` `→` or `Space` change scene, `A` toggles auto-cycle, `C` shifts the palette, `[` `]` change the symmetry, `↑` `↓` change sensitivity, `F` fullscreen, `H` hides everything, `?` lists all of this.
+Keyboard: `1` to `9` and `0` jump to a scene (`0` is the tenth), `←` `→` or `Space` change scene, `A` toggles auto-cycle, `C` shifts the palette, `[` `]` change the symmetry, `↑` `↓` change sensitivity, `F` fullscreen, `H` hides everything, `?` lists all of this.
 
 Touch: swipe sideways to change scenes, tap to show or hide the controls, double-tap for fullscreen where the browser allows it.
 
@@ -67,7 +83,7 @@ Handy for streaming (OBS browser source), projectors and sharing a look:
 
 | Parameter | Effect |
 |---|---|
-| `?scene=3` | Start on a scene (1 to 5) and skip the source picker |
+| `?scene=3` | Start on a scene (1 to 10) and skip the source picker |
 | `?ui=0` | Clean output: no dock, no toasts, demo beat. Good for OBS |
 | `?auto=0` | Stay on one scene |
 | `?colors=0.45` | Fix the starting palette (0 to 1). Otherwise it is random each visit |
@@ -82,7 +98,7 @@ Example: `LIVE_URL/?scene=5&ui=0&auto=0`
 - **Audio in.** Tab audio comes from `getDisplayMedia` (the video track is dropped right away), the mic from `getUserMedia` with echo cancellation, noise suppression and auto gain turned off so the music is not mangled. Files go through a `MediaElementSource`. Live sources are never connected to the speakers, so there is no feedback loop.
 - **Analyser.** A Web Audio `AnalyserNode` with a 1024-point FFT gives 512 frequency bins per frame.
 - **Features.** Bass, mid and high levels are averaged from bin ranges and auto-gained against a slowly decaying peak, so quiet and loud tracks both fill the screen. A beat is a bass spike well above its running average, with a short refractory window.
-- **Scene shader.** One GLSL ES 3.00 fragment shader holds all five scenes. The 512 bins are uploaded each frame as a 512x1 texture so a shader can read any frequency directly. Feedback lives in two ping-ponged half-float render targets.
+- **Scene shader.** One GLSL ES 3.00 fragment shader holds all ten scenes. The 512 bins are uploaded each frame as a 512x1 texture so a shader can read any frequency directly, and a 512x64 ring buffer keeps the last couple of seconds of spectrum for scenes that draw the past (Pulsar). Feedback lives in two ping-ponged half-float render targets.
 - **Display pass.** Chromatic aberration that grows with the kick, exponential tone mapping, a saturation and contrast curve and a vignette.
 - **Adaptive quality.** In Auto mode the renderer watches the frame time and steps the internal resolution down or back up, so phones stay smooth and do not cook.
 
@@ -127,8 +143,8 @@ Model: Claude Opus 5.5 in Claude Code. Measured from the session transcript: SES
 ## Repository layout
 
 - `index.html` the app shell (welcome screen, dock, settings)
-- `src/shaders.js` all GLSL: the five scenes, feedback and display passes
-- `src/renderer.js` WebGL2 setup, feedback buffers, adaptive resolution
+- `src/shaders.js` all GLSL: the ten scenes, feedback and display passes
+- `src/renderer.js` WebGL2 setup, feedback buffers, spectrum history, adaptive resolution
 - `src/audio.js` sources, FFT analysis, levels and beat detection
 - `src/main.js` UI, controls, gestures, URL options and the frame loop
 - `src/styles.css` the interface

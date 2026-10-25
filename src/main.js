@@ -212,7 +212,8 @@ addEventListener('keydown', e => {
   const k = e.key.toLowerCase();
   if (k === 'escape') { closeSettings(); $('keys').classList.remove('open'); return; }
   if (body.classList.contains('welcome') && k !== '?') return;
-  if (k >= '1' && k <= String(SCENES.length)) setScene(+k - 1);
+  const sk = '1234567890'.indexOf(k);
+  if (e.key.length === 1 && sk >= 0 && sk < SCENES.length) setScene(sk);
   else if (k === ' ' || k === 'arrowright') { e.preventDefault(); setScene(state.scene + 1); }
   else if (k === 'arrowleft') setScene(state.scene - 1);
   else if (k === 'a') { setAuto(!auto); toast(auto ? 'Auto-cycle on' : 'Auto-cycle off'); }

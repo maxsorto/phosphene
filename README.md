@@ -2,9 +2,9 @@
 
 # phosphene
 
-A psychedelic audio visualizer that runs in your browser. Ten GPU shader worlds (fractals, a wormhole, liquid light, a raymarched lattice, warp-speed stars, op-art, a synthwave horizon and more) that move with whatever you are listening to: Spotify in a browser tab, YouTube, your microphone or a local file.
+A psychedelic audio visualizer that runs in your browser. Twelve GPU shader worlds (fractals, a wormhole, liquid light, a raymarched lattice, warp-speed stars, op-art, a synthwave horizon, a heart monitor, a spinning record and more) that move with whatever you are listening to: Spotify in a browser tab, YouTube, your microphone or a local file.
 
-<p align="center"><b>Open it: <a href="LIVE_URL">LIVE_HOST</a></b><br>Desktop Chrome, Edge or Arc for tab audio. Phones work with the mic.</p>
+<p align="center"><b>Open it: <a href="https://phosphene-visualizer.vercel.app">phosphene-visualizer.vercel.app</a></b><br>Desktop Chrome, Edge or Arc for tab audio. Phones work with the mic.</p>
 
 No install, no account, no build step. Everything runs on your device and no audio ever leaves the browser.
 
@@ -29,6 +29,10 @@ No install, no account, no build step. Everything runs on your device and no aud
     <td><img src="docs/images/scene-horizon.jpg" alt="09 Neon Horizon"></td>
     <td><img src="docs/images/scene-pulsar.jpg" alt="10 Pulsar"></td>
   </tr>
+  <tr>
+    <td><img src="docs/images/scene-vitals.jpg" alt="11 Vitals"></td>
+    <td><img src="docs/images/scene-vinyl.jpg" alt="12 Vinyl"></td>
+  </tr>
 </table>
 
 ## The scenes
@@ -44,7 +48,9 @@ No install, no account, no build step. Everything runs on your device and no aud
 | 07 | Hyperspace | Three layers of star streaks in polar space | Warp speed and streak length on the bass |
 | 08 | Moiré | Two drifting ring fields multiplied into op-art interference | Ring density on the mids, color on the highs |
 | 09 | Neon Horizon | Perspective grid flyover, striped sun, spectrum skyline | The skyline is the spectrum, the sun pulses on the kick |
-| 10 | Pulsar | 42 ridgelines with hidden-line removal, after the 1979 pulsar plot | Each line is the spectrum from a moment ago, so the past scrolls back |
+| 10 | Pulsar | 40 ridgelines with hidden-line removal, after the plot of pulsar CP 1919 made famous by *Unknown Pleasures* | Every kick is drawn as a heartbeat; each line is 0.15 s further in the past, so the rhythm cascades back |
+| 11 | Vitals | A bedside heart monitor: green phosphor sweep, grid, erase gap and a live BPM readout | Each kick fires a PQRST complex; the BPM is measured from your music |
+| 12 | Vinyl | A record spinning at 33 1/3, top down | Grooves light up by frequency from the label out, kicks nudge the platter |
 
 Every scene draws into a feedback buffer. Each frame the previous image is zoomed, swirled and hue-shifted a little before the new one is laid on top, which is where the trails and the melting come from. Kicks punch the zoom and split the color channels.
 
@@ -67,7 +73,7 @@ Pick a source on the first screen:
 - **Audio file**. Pick or drag in an MP3, WAV, FLAC or M4A. It plays through your speakers with a scrub bar.
 - **Just watch**. A built-in silent beat, no permissions needed.
 
-Keyboard: `1` to `9` and `0` jump to a scene (`0` is the tenth), `←` `→` or `Space` change scene, `A` toggles auto-cycle, `C` shifts the palette, `[` `]` change the symmetry, `↑` `↓` change sensitivity, `F` fullscreen, `H` hides everything, `?` lists all of this.
+Keyboard: `1` to `9`, `0`, `-` and `=` jump to a scene (`0`, `-` and `=` are 10 to 12), `←` `→` or `Space` change scene, `A` toggles auto-cycle, `C` shifts the palette, `[` `]` change the symmetry, `↑` `↓` change sensitivity, `F` fullscreen, `H` hides everything, `?` lists all of this.
 
 Touch: swipe sideways to change scenes, tap to show or hide the controls, double-tap for fullscreen where the browser allows it.
 
@@ -83,13 +89,13 @@ Handy for streaming (OBS browser source), projectors and sharing a look:
 
 | Parameter | Effect |
 |---|---|
-| `?scene=3` | Start on a scene (1 to 10) and skip the source picker |
+| `?scene=3` | Start on a scene (1 to 12) and skip the source picker |
 | `?ui=0` | Clean output: no dock, no toasts, demo beat. Good for OBS |
 | `?auto=0` | Stay on one scene |
 | `?colors=0.45` | Fix the starting palette (0 to 1). Otherwise it is random each visit |
 | `?demo` | Skip the source picker and start on the demo beat |
 
-Example: `LIVE_URL/?scene=5&ui=0&auto=0`
+Example: `https://phosphene-visualizer.vercel.app/?scene=5&ui=0&auto=0`
 
 ## How it works
 
@@ -98,7 +104,8 @@ Example: `LIVE_URL/?scene=5&ui=0&auto=0`
 - **Audio in.** Tab audio comes from `getDisplayMedia` (the video track is dropped right away), the mic from `getUserMedia` with echo cancellation, noise suppression and auto gain turned off so the music is not mangled. Files go through a `MediaElementSource`. Live sources are never connected to the speakers, so there is no feedback loop.
 - **Analyser.** A Web Audio `AnalyserNode` with a 1024-point FFT gives 512 frequency bins per frame.
 - **Features.** Bass, mid and high levels are averaged from bin ranges and auto-gained against a slowly decaying peak, so quiet and loud tracks both fill the screen. A beat is a bass spike well above its running average, with a short refractory window.
-- **Scene shader.** One GLSL ES 3.00 fragment shader holds all ten scenes. The 512 bins are uploaded each frame as a 512x1 texture so a shader can read any frequency directly, and a 512x64 ring buffer keeps the last couple of seconds of spectrum for scenes that draw the past (Pulsar). Feedback lives in two ping-ponged half-float render targets.
+- **Scene shader.** One GLSL ES 3.00 fragment shader holds all twelve scenes. The 512 bins are uploaded each frame as a 512x1 texture so a shader can read any frequency directly. Feedback lives in two ping-ponged half-float render targets.
+- **Heartbeat trace.** Pulsar and Vitals share a 256x64 half-float ring buffer (about 77 seconds at 213 samples per second). Every detected beat writes a PQRST complex (Q dip, R spike, S dip, T wave, and a P wave timed ahead of the next expected beat), and the BPM is the median of recent beat intervals.
 - **Display pass.** Chromatic aberration that grows with the kick, exponential tone mapping, a saturation and contrast curve and a vignette.
 - **Adaptive quality.** In Auto mode the renderer watches the frame time and steps the internal resolution down or back up, so phones stay smooth and do not cook.
 
@@ -136,16 +143,17 @@ Pull requests are welcome. A new scene is one function in `src/shaders.js` and o
 
 ## How long it took
 
-Built in one Claude Code session on 25 Oct 2026, from "find or make the coolest psychedelic audio visualizer i can use for my mac" to this deployed repo, in about SESSION_MINUTES minutes of wall-clock time.
+Built in one Claude Code session. It started on 25 Oct 2026 at 17:47 local time with "find or make the coolest psychedelic audio visualizer i can use for my mac" and had reached the deployed, twelve-scene state described here by 18:31 the same evening: 44 minutes of wall-clock time, including the pauses for GitHub and Vercel sign-in.
 
-Model: Claude Opus 5.5 in Claude Code. Measured from the session transcript: SESSION_TURNS assistant turns, about SESSION_OUT output tokens, plus roughly SESSION_CACHE cached-read tokens.
+Model: Claude Opus 5.5 in Claude Code. Measured from the session transcript when this section was written: 120 assistant turns, about 152,000 output tokens and about 240,000 tokens written to the prompt cache, plus roughly 19 million cached-read tokens (cheap re-reads of the same context).
 
 ## Repository layout
 
 - `index.html` the app shell (welcome screen, dock, settings)
-- `src/shaders.js` all GLSL: the ten scenes, feedback and display passes
-- `src/renderer.js` WebGL2 setup, feedback buffers, spectrum history, adaptive resolution
+- `src/shaders.js` all GLSL: the twelve scenes, feedback and display passes
+- `src/renderer.js` WebGL2 setup, feedback buffers, heartbeat texture, adaptive resolution
 - `src/audio.js` sources, FFT analysis, levels and beat detection
+- `src/ecg.js` the heartbeat waveform, its ring buffer and the BPM
 - `src/main.js` UI, controls, gestures, URL options and the frame loop
 - `src/styles.css` the interface
 - `docs/` README images, the diagram and the cover art source (`docs/cover/cover.html`)

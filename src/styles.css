@@ -68,6 +68,21 @@ canvas#gl { position: fixed; inset: 0; width: 100vw; height: 100vh; display: blo
 .fine a { color: var(--label-2); text-decoration: none; margin-left: 6px; white-space: nowrap; }
 .fine a:hover { color: var(--label); }
 
+/* ---------- Heart monitor overlay ---------- */
+.monitor { position: fixed; inset: max(22px, env(safe-area-inset-top)) 28px auto 28px; display: none; justify-content: space-between;
+  align-items: flex-start; pointer-events: none; color: #39ff6b; font-family: var(--mono); text-shadow: 0 0 12px rgba(57, 255, 107, .45); }
+body.scene-monitor .monitor { display: flex; }
+body.welcome .monitor { display: none; }
+.lead { font-size: 11px; letter-spacing: .28em; opacity: .7; padding-top: 6px; }
+.vitals { text-align: right; }
+.hr-label { font-size: 11px; letter-spacing: .28em; opacity: .75; display: flex; justify-content: flex-end; align-items: center; gap: 8px; }
+#heart { width: 16px; height: 16px; fill: currentColor; stroke: none; transform-origin: center; }
+#heart.beat { animation: heartbeat .35s ease-out; }
+@keyframes heartbeat { 0% { transform: scale(1.45); } 100% { transform: scale(1); } }
+.hr { font-weight: 300; font-size: 64px; line-height: 1; letter-spacing: -.02em; font-variant-numeric: tabular-nums; margin-top: 6px; }
+.hr small { font-size: 11px; letter-spacing: .28em; margin-left: 8px; opacity: .7; }
+@media (max-width: 720px) { .hr { font-size: 44px; } .monitor { inset-inline: 18px; } }
+
 /* ---------- Toast ---------- */
 .toast {
   position: fixed; top: max(18px, env(safe-area-inset-top)); left: 50%; transform: translate(-50%, -140%);

@@ -7,11 +7,12 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <title>Phosphene · Psychedelic audio visualizer</title>
-<meta name="description" content="A psychedelic audio visualizer that runs in your browser. Ten GPU shader worlds that react to Spotify, YouTube, your mic or any audio file.">
+<meta name="description" content="A psychedelic audio visualizer that runs in your browser. Twelve GPU shader worlds that react to Spotify, YouTube, your mic or any audio file.">
 <meta property="og:title" content="Phosphene">
 <meta property="og:description" content="A psychedelic audio visualizer that runs in your browser.">
 <meta property="og:type" content="website">
-<meta property="og:image" content="/og.png">
+<meta property="og:image" content="https://phosphene-visualizer.vercel.app/og.png">
+<meta property="og:url" content="https://phosphene-visualizer.vercel.app/">
 <meta name="twitter:card" content="summary_large_image">
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="/apple-touch-icon.png">
@@ -57,6 +58,15 @@
       <a href="https://github.com/maxsorto/phosphene" target="_blank" rel="noopener">Open source on GitHub</a></p>
   </div>
 </section>
+
+<!-- Heart monitor readout (Pulsar scene) -->
+<div id="monitor" class="monitor" aria-hidden="true">
+  <div class="lead">ECG&nbsp;&nbsp;II&nbsp;&nbsp;25 mm/s</div>
+  <div class="vitals">
+    <div class="hr-label">HR <svg id="heart" viewBox="0 0 24 24"><path d="M12 20.5s-7.5-4.6-9.3-9.4C1.6 8 3.6 4.5 7.1 4.5c2 0 3.6 1.1 4.9 2.9 1.3-1.8 2.9-2.9 4.9-2.9 3.5 0 5.5 3.5 4.4 6.6-1.8 4.8-9.3 9.4-9.3 9.4z"/></svg></div>
+    <div class="hr"><span id="bpm">--</span><small>BPM</small></div>
+  </div>
+</div>
 
 <!-- Scene toast -->
 <div id="toast" class="toast glass"><span id="toastTitle"></span><span id="toastSub"></span></div>
@@ -111,7 +121,7 @@
   <div class="glass keys-card">
     <header><h2>Keyboard shortcuts</h2><button class="icon-btn" id="keysClose" title="Close"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button></header>
     <dl>
-      <dt><kbd>1</kbd> to <kbd>0</kbd></dt><dd>Jump to a scene (0 is the tenth)</dd>
+      <dt><kbd>1</kbd> to <kbd>0</kbd>, <kbd>-</kbd> <kbd>=</kbd></dt><dd>Jump to a scene (0, - and = are 10 to 12)</dd>
       <dt><kbd>←</kbd> <kbd>→</kbd> <kbd>Space</kbd></dt><dd>Previous / next scene</dd>
       <dt><kbd>A</kbd></dt><dd>Auto-cycle on or off</dd>
       <dt><kbd>C</kbd></dt><dd>Shift colors</dd>

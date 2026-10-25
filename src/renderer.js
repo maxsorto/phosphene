@@ -1,5 +1,5 @@
-// WebGL2 renderer: a ping-pong pair of feedback buffers plus a 512x1
-// spectrum texture. Resolution adapts to keep the frame rate smooth.
+// WebGL2 renderer: a ping-pong pair of feedback buffers, a 512x1 spectrum
+// texture and the heart monitor trace. Resolution adapts to keep the frame rate smooth.
 import { VS, SCENE_FS, DISPLAY_FS } from './shaders.js';
 
 export class Renderer {
@@ -29,13 +29,12 @@ export class Renderer {
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.R8, 512, 1, 0, gl.RED, gl.UNSIGNED_BYTE, new Uint8Array(512));
     this.texParams();
 
-    // 64 rows of spectrum history (a ring buffer) for scenes that draw the past.
-    this.histTex = gl.createTexture();
-    gl.bindTexture(gl.TEXTURE_2D, this.histTex);
-    gl.texImage2D(gl.TEXTURE_2D, 0, gl.R8, 512, 64, 0, gl.RED, gl.UNSIGNED_BYTE, new Uint8Array(512 * 64));
+    // Heartbeat history: a 256 x 64 ring buffer of signed samples, read with texelFetch.
+    this.ecgTex = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, this.ecgTex);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.R16F, 256, 64, 0, gl.RED, gl.FLOAT, new Float32Array(256 * 64));
     this.texParams();
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.REPEAT);
-    this.histRow = 0; this.frame = 0;
+    this.ecgHead = 0;
 
     this.bufs = [];
     this.resize();
@@ -121,24 +120,24 @@ export class Renderer {
     if (u.S) gl.uniform1i(u.S, s.scene);
     if (u.P) gl.uniform1i(u.P, 0);
     if (u.F) gl.uniform1i(u.F, 1);
-    if (u.HIS) gl.uniform1i(u.HIS, 2);
-    f('HROW', this.histRow);
+    if (u.ECG) gl.uniform1i(u.ECG, 2);
+    f('HEAD', this.ecgHead);
   }
 
-  render(spectrum, state) {
+  render(spectrum, state, ecg) {
     const gl = this.gl, [src, dst] = this.bufs;
     gl.bindTexture(gl.TEXTURE_2D, this.specTex);
     gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, 512, 1, gl.RED, gl.UNSIGNED_BYTE, spectrum);
-    if (++this.frame % 2 === 0) {
-      this.histRow = (this.histRow + 1) % 64;
-      gl.bindTexture(gl.TEXTURE_2D, this.histTex);
-      gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, this.histRow, 512, 1, gl.RED, gl.UNSIGNED_BYTE, spectrum);
+    if (state.scene >= 9) {
+      gl.bindTexture(gl.TEXTURE_2D, this.ecgTex);
+      gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, 256, 64, gl.RED, gl.FLOAT, ecg.trace);
+      this.ecgHead = ecg.head;
     }
 
     gl.useProgram(this.scene.p); this.uniforms(this.scene.u, state);
     gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, src.t);
     gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D, this.specTex);
-    gl.activeTexture(gl.TEXTURE2); gl.bindTexture(gl.TEXTURE_2D, this.histTex);
+    gl.activeTexture(gl.TEXTURE2); gl.bindTexture(gl.TEXTURE_2D, this.ecgTex);
     gl.activeTexture(gl.TEXTURE0);
     gl.bindFramebuffer(gl.FRAMEBUFFER, dst.f); gl.viewport(0, 0, this.W, this.H);
     gl.drawArrays(gl.TRIANGLES, 0, 3);

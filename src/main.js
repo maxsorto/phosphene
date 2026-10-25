@@ -1,6 +1,7 @@
 import { SCENES } from './shaders.js';
 import { Renderer } from './renderer.js';
 import { AudioEngine } from './audio.js';
+import { ECG } from './ecg.js';
 
 const $ = id => document.getElementById(id);
 const body = document.body;
@@ -17,6 +18,7 @@ try {
   throw e;
 }
 const audio = new AudioEngine($('audio'));
+const ecg = new ECG();
 addEventListener('resize', () => renderer.resize());
 
 const state = { t: 0, b: 0, m: 0, h: 0, beat: 0, k: 8, z: 0, c: 0, trails: 0.78, scene: 0 };
@@ -46,6 +48,7 @@ function setScene(i, { quiet = false } = {}) {
   $('sceneName').textContent = SCENES[state.scene].name;
   $('sceneNum').textContent = num(state.scene);
   [...dots.children].forEach((d, j) => d.classList.toggle('on', j === state.scene));
+  body.classList.toggle('scene-monitor', state.scene === 10);
   if (!quiet) toast(num(state.scene) + '   ' + SCENES[state.scene].name, SCENES[state.scene].blurb);
 }
 function setAuto(on) {
@@ -58,6 +61,10 @@ function setSymmetry(k) { state.k = Math.max(2, Math.min(16, k)); $('symVal').te
 function shiftColors() { state.c += 0.17; }
 
 audio.onBeat = now => {
+  ecg.beat(now, audio.level.b);
+  if (state.scene === 10) {
+    $('heart').classList.remove('beat'); void $('heart').offsetWidth; $('heart').classList.add('beat');
+  }
   beatsInScene++;
   if (Math.random() < 0.12) state.c += 0.15 + Math.random() * 0.3;
   if (auto && (beatsInScene >= 48 || now - sceneStart > 45)) {
@@ -212,7 +219,7 @@ addEventListener('keydown', e => {
   const k = e.key.toLowerCase();
   if (k === 'escape') { closeSettings(); $('keys').classList.remove('open'); return; }
   if (body.classList.contains('welcome') && k !== '?') return;
-  const sk = '1234567890'.indexOf(k);
+  const sk = '1234567890-='.indexOf(k);
   if (e.key.length === 1 && sk >= 0 && sk < SCENES.length) setScene(sk);
   else if (k === ' ' || k === 'arrowright') { e.preventDefault(); setScene(state.scene + 1); }
   else if (k === 'arrowleft') setScene(state.scene - 1);
@@ -241,7 +248,9 @@ function frame() {
   state.z += dt * (0.35 + L.b * 1.6);
   if (auto && now - sceneStart > 60) setScene(state.scene + 1);   // keep moving through quiet passages
   renderer.adapt(dt, now);
-  renderer.render(audio.freq, state);
+  ecg.update(now, dt, L.m);
+  renderer.render(audio.freq, state, ecg);
+  if (state.scene === 10) $('bpm').textContent = ecg.bpm && now - ecg.beatT < 3 ? ecg.bpm : '--';
   if (!dock.classList.contains('hidden')) {
     const v = [L.b, L.m, (L.m + L.h) / 2, L.h];
     bars.forEach((b, i) => { b.style.height = (18 + Math.min(1, v[i]) * 82) + '%'; });

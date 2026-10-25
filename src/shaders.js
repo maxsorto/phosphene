@@ -12,7 +12,9 @@ export const SCENES = [
   { name: 'Hyperspace',       blurb: 'Star streaks at warp speed' },
   { name: 'Moiré',            blurb: 'Op-art interference rings' },
   { name: 'Neon Horizon',     blurb: 'Synthwave grid and spectrum skyline' },
-  { name: 'Pulsar',           blurb: 'Ridgelines from spectrum history' },
+  { name: 'Pulsar',           blurb: 'Ridgelines of the beat, back in time' },
+  { name: 'Vitals',           blurb: 'A heart monitor for your music' },
+  { name: 'Vinyl',            blurb: 'Grooves lit by the spectrum' },
 ];
 
 export const VS = `#version 300 es
@@ -21,7 +23,7 @@ in vec2 a; void main(){ gl_Position = vec4(a,0.,1.); }`;
 const COMMON = `#version 300 es
 precision highp float;
 uniform vec2 R; uniform float T,B,M,H,BEAT,K,Z,C,TR; uniform int S;
-uniform sampler2D P, F, HIS; uniform float HROW;
+uniform sampler2D P, F, ECG; uniform float HEAD;
 out vec4 o;
 #define TAU 6.28318530718
 vec3 pal(float t){ return .5+.5*cos(TAU*(t+vec3(0.,.33,.67))); }
@@ -32,7 +34,13 @@ float noise(vec2 p){ vec2 i=floor(p),f=fract(p); f=f*f*(3.-2.*f);
 float fbm(vec2 p){ float v=0.,a=.5; for(int i=0;i<5;i++){ v+=a*noise(p); p=rot(.5)*p*2.03; a*=.5; } return v; }
 vec2 kale(vec2 p,float n){ float a=atan(p.y,p.x), r=length(p), s=TAU/n; a=mod(a,s); a=abs(a-s*.5); return r*vec2(cos(a),sin(a)); }
 float spec(float x){ return texture(F,vec2(clamp(x,0.,1.),.5)).r; }
-float hist(float x,float age){ return texture(HIS,vec2(clamp(x,0.,1.),(HROW-age+.5)/64.)).r; }
+float ecgAt(float k){                  // linear read from the 256 x 64 heartbeat ring buffer
+  k = mod(k, 16384.);
+  float k0 = floor(k), k1 = mod(k0+1., 16384.);
+  float a = texelFetch(ECG, ivec2(int(mod(k0,256.)), int(k0/256.)), 0).r;
+  float b = texelFetch(ECG, ivec2(int(mod(k1,256.)), int(k1/256.)), 0).r;
+  return mix(a, b, k-k0);
+}
 vec3 hue(vec3 c,float a){ const vec3 k=vec3(.57735); float ca=cos(a); return c*ca+cross(k,c)*sin(a)+k*dot(k,c)*(1.-ca); }
 `;
 
@@ -183,35 +191,89 @@ vec3 s8(vec2 p){                       // Neon horizon
   }
   return c;
 }
-vec3 s9(vec2 p){                       // Pulsar ridgelines, front to back with hidden-line removal
+vec3 s9(vec2 p){                       // Pulsar: ridgelines of the heartbeat history, front to back
   vec3 c = vec3(0);
-  for(int i=0;i<42;i++){
+  float x = abs(p.x), xn = (p.x+.62)/1.24, dk = 1.6/R.x/1.24*256.;
+  if(x > .66) return c;
+  float env = .3+.7*smoothstep(.62,.08,x);
+  for(int i=0;i<40;i++){
     float fi = float(i);
-    float y = -.44 + fi*.021;
-    float x = abs(p.x);
-    float env = smoothstep(.62, .06, x);
-    float h = hist(.02+x*.55, fi*1.5)*env*env*.34 + .004*noise(vec2(p.x*40., fi*3.+T));
-    float d = p.y-(y+h);
-    float ink = smoothstep(.0032, .0012, abs(d));
-    c += mix(vec3(.92), pal(fi*.015+C+T*.03), .35+.4*H)*ink*(.7+.6*B)*smoothstep(.75,.55,x);
-    if(d < .003) break;
+    float y = -.43 + fi*.022;
+    float k = HEAD - fi*32. - (1.-xn)*256.;         // each line is 0.15 s further back
+    float a = ecgAt(k-dk), b = ecgAt(k), e = ecgAt(k+dk);
+    float g = .15*env + .004*noise(vec2(p.x*40., fi*3.));
+    float lo = y+g*min(b,min(a,e)), hi = y+g*max(b,max(a,e));
+    float d = max(max(lo-p.y, p.y-hi), 0.);
+    float ink = smoothstep(.0032, .0012, d);
+    c += mix(vec3(.92), pal(fi*.015+C+T*.03), .35+.4*H)*ink*(.7+.6*B)*smoothstep(.66,.56,x);
+    if(p.y < hi+.003) break;
   }
+  return c;
+}
+vec3 s10(vec2 p){                      // Vitals: green phosphor sweep over a monitor grid
+  const vec3 G = vec3(.22,1.,.42);
+  const float SW = 853.;                        // samples per 4 s sweep
+  float px = 1./R.y;
+  vec2 gp = p*10.;
+  float dg = min(abs(fract(gp.x+.5)-.5), abs(fract(gp.y+.5)-.5))/10.;
+  vec2 gq = p*50.;
+  float dq = min(abs(fract(gq.x+.5)-.5), abs(fract(gq.y+.5)-.5))/50.;
+  vec3 c = G*(.11*smoothstep(1.5*px,0.,dg) + .035*smoothstep(px,0.,dq));
+  float headU = fract(HEAD/SW);
+  float u = gl_FragCoord.x/R.x, du = 1.5/R.x;
+  float age = fract(headU-u);                   // 0 at the head, 1 just ahead of it
+  float k = HEAD - age*SW, dk = du*SW;
+  float y0 = ecgAt(k-dk), y1 = ecgAt(k), y2 = age < du ? y1 : ecgAt(k+dk);   // never join across the head
+  float base = -.06, gain = .3+.06*B;
+  float lo = base+gain*min(y1,min(y0,y2)), hi = base+gain*max(y1,max(y0,y2));
+  float d = max(max(lo-p.y, p.y-hi), 0.);
+  float live = exp(-age*1.1)*smoothstep(1.,.965,age);
+  c += G*(smoothstep(2.4*px,.6*px,d)*1.5 + .0035/(d+.004)*.35)*live;
+  vec2 hp = vec2((headU-.5)*R.x/R.y, base+gain*ecgAt(HEAD));
+  c += G*.006/(length(p-hp)+.006)*(.8+B);
+  return c;
+}
+vec3 s11(vec2 p){                      // Vinyl: a spinning record, grooves lit by the spectrum
+  const float R0 = .46, L = .15;
+  float r = length(p), a = atan(p.y,p.x);
+  float spin = T*3.49 + BEAT*.35;               // 33 1/3 rpm, nudged on every kick
+  vec3 c = vec3(0);
+  if(r < R0){
+    float aa = a - spin;
+    float t = clamp((r-L)/(R0-L), 0., 1.);
+    float band = spec(t*.45+.01);
+    float groove = .5+.5*sin(r*900.);
+    float wear = noise(vec2(cos(aa),sin(aa))*5.+r*90.);
+    float gap = smoothstep(.0, .006, abs(fract(t*5.+.5)-.5)*(R0-L)/5.);   // gaps between tracks
+    c = mix(vec3(.05), pal(t*1.5+C+T*.03), .35+.6*band)*(.45+.55*groove)*(.6+3.2*band)*(.7+.6*wear)*mix(.25,1.,gap);
+    float sheen = pow(abs(cos(a-.7)), 28.) + .5*pow(abs(cos(a+1.1)), 60.);
+    c += vec3(.9)*sheen*(.22+.45*groove)*step(L+.01, r);
+    if(r < L){
+      vec2 q = rot(-spin)*p;
+      c = pal(C+.1)*.8*(.85+.3*B);
+      c *= 1.-.6*smoothstep(.0025,0.,abs(r-.125))-.6*smoothstep(.002,0.,abs(r-.04));
+      c = mix(c, vec3(.95), smoothstep(.0028,0.,abs(q.y-.075))*step(abs(q.x),.045));
+      c *= smoothstep(.011,.015,r)*smoothstep(L,L-.004,r);
+    }
+    c *= smoothstep(R0, R0-.004, r);
+  }
+  c += vec3(.6)*.0015/(abs(r-R0)+.002)*(.3+B);
   return c;
 }
 void main(){
   vec2 p = (gl_FragCoord.xy-.5*R)/R.y;
   vec3 col;
   if(S==0) col=s0(p); else if(S==1) col=s1(p); else if(S==2) col=s2(p); else if(S==3) col=s3(p); else if(S==4) col=s4(p);
-  else if(S==5) col=s5(p); else if(S==6) col=s6(p); else if(S==7) col=s7(p); else if(S==8) col=s8(p); else col=s9(p);
+  else if(S==5) col=s5(p); else if(S==6) col=s6(p); else if(S==7) col=s7(p); else if(S==8) col=s8(p); else if(S==9) col=s9(p); else if(S==10) col=s10(p); else col=s11(p);
   if(any(isnan(col)) || any(isinf(col))) col = vec3(0);
   // feedback: zoom, swirl, hue-drift the previous frame
   vec2 q = p*rot(.003+.015*M*sin(T*.3));
-  float fz = S==2 || S==5 ? .3 : S>=7 ? .15 : 1.;       // liquid, op-art and line scenes keep their detail
+  float fz = S>=10 ? 0. : S==2 || S==5 ? .3 : S>=7 ? .15 : 1.;       // liquid, op-art and line scenes keep their detail
   q *= 1.-fz*(.008+.03*B+.04*BEAT);
   q += .002*vec2(sin(p.y*7.+T*.7),cos(p.x*7.-T*.6));
   vec3 prev = texture(P, q*vec2(R.y/R.x,1.)+.5).rgb;
   prev = max(hue(prev,.02+.1*H)*min(TR+.08*M,.97)-.004, 0.);
-  prev *= S==9 ? .45 : S==7 ? .6 : 1.;         // crisp lines for pulsar and moire
+  prev *= S>=10 ? .35 : S==9 ? .45 : S==7 ? .6 : 1.;   // crisp lines for vitals, pulsar and moire
   o = vec4(col*.55+prev, 1.);
 }`;
 

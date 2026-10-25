@@ -1,0 +1,8 @@
+# Only the app ships; docs and local helpers stay in the repo.
+.vercel
+.DS_Store
+.playwright-mcp
+README.md
+LICENSE
+docs
+Launch Phosphene.command

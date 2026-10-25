@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#000000">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>Phosphene · Psychedelic audio visualizer</title>
+<meta name="description" content="A psychedelic audio visualizer that runs in your browser. Five GPU shader worlds that react to Spotify, YouTube, your mic or any audio file.">
+<meta property="og:title" content="Phosphene">
+<meta property="og:description" content="A psychedelic audio visualizer that runs in your browser.">
+<meta property="og:type" content="website">
+<meta property="og:image" content="/og.png">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@200;300;400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/src/styles.css">
+</head>
+<body>
+<canvas id="gl"></canvas>
+
+<!-- Welcome / source picker -->
+<section id="welcome" class="sheet-welcome">
+  <div class="welcome-card glass">
+    <div class="brand">
+      <img src="/favicon.svg" alt="" class="brand-mark">
+      <div><h1 class="wordmark">phosphene</h1><p class="kicker">audio visualizer / v1</p></div>
+    </div>
+    <p class="tagline">Turn your music into light. Pick what to listen to.</p>
+    <div class="sources">
+      <button class="source" data-source="tab" id="srcTab">
+        <span class="source-icon"><svg viewBox="0 0 24 24"><rect x="3" y="4.5" width="18" height="15" rx="3"/><path d="M3 9h18"/><circle cx="6.2" cy="6.8" r=".6" fill="currentColor"/><circle cx="8.4" cy="6.8" r=".6" fill="currentColor"/></svg></span>
+        <span class="source-text"><span class="source-title">Browser tab <em class="badge">Best</em></span>
+        <span class="source-sub">Spotify Web Player, YouTube, SoundCloud. Clean, direct audio.</span></span>
+      </button>
+      <button class="source" data-source="mic">
+        <span class="source-icon"><svg viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21"/></svg></span>
+        <span class="source-text"><span class="source-title">Microphone</span>
+        <span class="source-sub">Anything playing out loud, including desktop apps.</span></span>
+      </button>
+      <button class="source" data-source="file">
+        <span class="source-icon"><svg viewBox="0 0 24 24"><path d="M9 18V5.5l11-2V16"/><circle cx="6.5" cy="18" r="2.5"/><circle cx="17.5" cy="16" r="2.5"/></svg></span>
+        <span class="source-text"><span class="source-title">Audio file</span>
+        <span class="source-sub">Pick or drop an MP3, WAV, FLAC or M4A.</span></span>
+      </button>
+      <button class="source" data-source="demo">
+        <span class="source-icon"><svg viewBox="0 0 24 24"><path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z"/><path d="M18.5 15.5l.7 1.8 1.8.7-1.8.7-.7 1.8-.7-1.8-1.8-.7 1.8-.7z"/></svg></span>
+        <span class="source-text"><span class="source-title">Just watch</span>
+        <span class="source-sub">A built-in beat. Silent, no permissions.</span></span>
+      </button>
+    </div>
+    <p class="fine">Everything runs on your device. No audio ever leaves your browser.
+      <a href="https://github.com/maxsorto/phosphene" target="_blank" rel="noopener">Open source on GitHub</a></p>
+  </div>
+</section>
+
+<!-- Scene toast -->
+<div id="toast" class="toast glass"><span id="toastTitle"></span><span id="toastSub"></span></div>
+
+<!-- Dock -->
+<nav id="dock" class="dock glass" aria-label="Player controls">
+  <button class="now" id="nowBtn" title="Change source">
+    <span class="now-art" id="nowArt"><span class="eq"><i></i><i></i><i></i><i></i></span></span>
+    <span class="now-text"><span class="now-title" id="nowTitle">Demo beat</span><span class="now-sub" id="nowSub">Tap to change source</span></span>
+  </button>
+
+  <div class="scene-switch">
+    <button class="icon-btn" id="prevBtn" title="Previous scene (←)"><svg viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7"/></svg></button>
+    <div class="scene-meta">
+      <span class="scene-line"><span class="scene-num" id="sceneNum">01</span><span class="scene-name" id="sceneName">Fractal Bloom</span></span>
+      <span class="dots" id="dots"></span>
+    </div>
+    <button class="icon-btn" id="nextBtn" title="Next scene (→ or Space)"><svg viewBox="0 0 24 24"><path d="M9 5l7 7-7 7"/></svg></button>
+  </div>
+
+  <div class="actions">
+    <button class="icon-btn file-only" id="playBtn" title="Play / pause"><svg viewBox="0 0 24 24" class="i-pause"><path d="M8 5v14M16 5v14"/></svg><svg viewBox="0 0 24 24" class="i-play"><path d="M7 4.5v15l12-7.5z" fill="currentColor"/></svg></button>
+    <button class="icon-btn toggle on" id="autoBtn" title="Auto-cycle scenes (A)"><svg viewBox="0 0 24 24"><path d="M3 7h3.5c4 0 6.5 10 11 10H21M3 17h3.5c1.6 0 2.9-1.5 4-3.3M14 9.3c1-1.3 2.1-2.3 3.5-2.3H21M18.5 4.5L21 7l-2.5 2.5M18.5 14.5L21 17l-2.5 2.5"/></svg></button>
+    <button class="icon-btn" id="colorBtn" title="Shift colors (C)"><svg viewBox="0 0 24 24"><path d="M12 3a9 9 0 1 0 0 18c1.2 0 1.8-.9 1.8-1.8 0-1.4-1.3-1.6-1.3-3 0-1 .8-1.7 1.8-1.7H17a4 4 0 0 0 4-4C21 6.4 17 3 12 3z"/><circle cx="7.5" cy="11" r="1.2" fill="currentColor"/><circle cx="10" cy="7" r="1.2" fill="currentColor"/><circle cx="14.5" cy="7" r="1.2" fill="currentColor"/></svg></button>
+    <button class="icon-btn" id="settingsBtn" title="Settings"><svg viewBox="0 0 24 24"><path d="M4 7h10M18 7h2M4 17h2M10 17h10"/><circle cx="16" cy="7" r="2.2"/><circle cx="8" cy="17" r="2.2"/></svg></button>
+    <button class="icon-btn fs-only" id="fsBtn" title="Fullscreen (F)"><svg viewBox="0 0 24 24"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg></button>
+  </div>
+
+  <div class="progress file-only" id="progress"><span id="progressFill"></span></div>
+</nav>
+
+<!-- Settings sheet -->
+<div id="settings" class="settings glass" role="dialog" aria-label="Settings">
+  <header><h2>Settings</h2><button class="icon-btn" id="settingsClose" title="Close"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button></header>
+  <label class="row"><span>Sensitivity</span><input type="range" id="sens" min="0.3" max="3" step="0.05" value="1"></label>
+  <label class="row"><span>Trails</span><input type="range" id="trails" min="0" max="1" step="0.01" value="0.4"></label>
+  <div class="row"><span>Symmetry</span>
+    <div class="stepper"><button id="symDown">−</button><output id="symVal">8</output><button id="symUp">+</button></div></div>
+  <div class="row"><span>Quality</span>
+    <div class="segmented" id="quality">
+      <button data-q="auto" class="on">Auto</button><button data-q="low">Low</button><button data-q="medium">Med</button><button data-q="high">High</button>
+    </div></div>
+  <div class="row"><span>Auto-cycle scenes</span><button class="switch on" id="autoSwitch" role="switch" aria-checked="true"><i></i></button></div>
+  <div class="row links">
+    <button class="link" id="changeSource">Change source</button>
+    <button class="link" id="showKeys">Keyboard shortcuts</button>
+  </div>
+</div>
+
+<!-- Shortcuts -->
+<div id="keys" class="modal">
+  <div class="glass keys-card">
+    <header><h2>Keyboard shortcuts</h2><button class="icon-btn" id="keysClose" title="Close"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button></header>
+    <dl>
+      <dt><kbd>1</kbd> to <kbd>5</kbd></dt><dd>Jump to a scene</dd>
+      <dt><kbd>←</kbd> <kbd>→</kbd> <kbd>Space</kbd></dt><dd>Previous / next scene</dd>
+      <dt><kbd>A</kbd></dt><dd>Auto-cycle on or off</dd>
+      <dt><kbd>C</kbd></dt><dd>Shift colors</dd>
+      <dt><kbd>[</kbd> <kbd>]</kbd></dt><dd>Less / more symmetry</dd>
+      <dt><kbd>↑</kbd> <kbd>↓</kbd></dt><dd>Sensitivity</dd>
+      <dt><kbd>F</kbd></dt><dd>Fullscreen</dd>
+      <dt><kbd>H</kbd></dt><dd>Hide everything</dd>
+      <dt><kbd>?</kbd></dt><dd>This list</dd>
+    </dl>
+    <p class="fine">On touch screens: swipe to change scenes, tap to show the controls.</p>
+  </div>
+</div>
+
+<div id="drop" class="drop"><div class="glass drop-card">Drop audio to play</div></div>
+<div id="fatal" class="fatal"></div>
+<input id="fileInput" type="file" accept="audio/*" hidden>
+<audio id="audio" loop></audio>
+<script type="module" src="/src/main.js"></script>
+</body>
+</html>

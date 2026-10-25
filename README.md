@@ -4,7 +4,7 @@
 
 A psychedelic audio visualizer that runs in your browser. Twelve GPU shader worlds (fractals, a wormhole, liquid light, a raymarched lattice, warp-speed stars, op-art, a synthwave horizon, a heart monitor, a spinning record and more) that move with whatever you are listening to: Spotify in a browser tab, YouTube, your microphone or a local file.
 
-<p align="center"><b>Open it: <a href="https://phosphene-visualizer.vercel.app">phosphene-visualizer.vercel.app</a></b><br>Desktop Chrome, Edge or Arc for tab audio. Phones work with the mic.</p>
+<p align="center"><b>Open it: <a href="https://phosphene-viz.vercel.app">phosphene-viz.vercel.app</a></b><br>Desktop Chrome, Edge or Arc for tab audio. Phones work with the mic.</p>
 
 No install, no account, no build step. Everything runs on your device and no audio ever leaves the browser.
 
@@ -95,7 +95,7 @@ Handy for streaming (OBS browser source), projectors and sharing a look:
 | `?colors=0.45` | Fix the starting palette (0 to 1). Otherwise it is random each visit |
 | `?demo` | Skip the source picker and start on the demo beat |
 
-Example: `https://phosphene-visualizer.vercel.app/?scene=5&ui=0&auto=0`
+Example: `https://phosphene-viz.vercel.app/?scene=5&ui=0&auto=0`
 
 ## How it works
 

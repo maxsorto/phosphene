@@ -1,0 +1,13 @@
+{
+  "name": "phosphene",
+  "version": "2.0.0",
+  "private": true,
+  "type": "module",
+  "description": "A psychedelic audio visualizer for the browser. No build step.",
+  "scripts": {
+    "dev": "node serve.mjs",
+    "start": "node serve.mjs"
+  },
+  "engines": { "node": ">=20" },
+  "license": "MIT"
+}

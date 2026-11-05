@@ -2,3 +2,4 @@
 .vercel
 .playwright-mcp
 node_modules
+.claude

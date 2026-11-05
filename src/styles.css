@@ -83,6 +83,26 @@ body.welcome .monitor { display: none; }
 .hr small { font-size: 11px; letter-spacing: .28em; margin-left: 8px; opacity: .7; }
 @media (max-width: 720px) { .hr { font-size: 44px; } .monitor { inset-inline: 18px; } }
 
+/* ---------- Now playing pill ---------- */
+.np {
+  position: fixed; top: max(18px, env(safe-area-inset-top)); right: 18px; display: flex; align-items: center; gap: 12px;
+  padding: 8px 16px 8px 8px; border-radius: 16px; max-width: min(360px, calc(100vw - 36px));
+  transform: translateX(calc(100% + 30px)); opacity: 0; pointer-events: none;
+  transition: transform .7s var(--ease), opacity .5s;
+}
+.np.show { transform: none; opacity: 1; }
+body.scene-monitor .np { top: 120px; }
+body.welcome .np, body.clean:not(.np-on) .np { display: none; }
+.np-art { flex: none; width: 40px; height: 40px; border-radius: 10px; background: var(--ink); color: #0a0a0c; display: grid; place-items: center; background-size: cover; background-position: center; }
+.np-art svg { width: 20px; height: 20px; }
+body.has-art .np-art svg { display: none; }
+.np-text { display: flex; flex-direction: column; min-width: 0; }
+.np-title { font-weight: 500; font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.np-sub { font: 400 10px/1.6 var(--mono); letter-spacing: .14em; text-transform: uppercase; color: var(--label-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.np.beat .np-art { animation: npbeat .3s ease-out; }
+@keyframes npbeat { 0% { transform: scale(1.12); } 100% { transform: scale(1); } }
+@media (max-width: 720px) { .np { right: 12px; } }
+
 /* ---------- Toast ---------- */
 .toast {
   position: fixed; top: max(18px, env(safe-area-inset-top)); left: 50%; transform: translate(-50%, -140%);

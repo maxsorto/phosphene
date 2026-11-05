@@ -44,14 +44,21 @@ export class Features {
       bpm: 0, period: 0.5, phase: 0, bar: 0, beatNo: 0, beatPulse: 0, tempoConf: 0, locked: false,
       energy: 0, lift: 1, build: 0, drop: 0, quiet: true, quietFor: 0,
       chroma: new Float32Array(12), key: -1, minor: false, keyName: '', keyConf: 0, keyHue: 0,
-      centroid: 0, pitchHz: 0,
+      centroid: 0, pitchHz: 0, shift: 0, shiftFor: 0,
     };
     this.fast = 0; this.slow = 0; this.peakE = 1e-3; this.slowHist = []; this.lastDrop = -10;
     this.anchor = 0; this.lastTempoT = 0; this.lastPhaseT = 0; this.cand = { bpm: 0, n: 0 };
     this.downWeights = new Float32Array(4); this.downIdx = 0; this.lastBeatNo = -1;
     this.chromaLT = new Float32Array(12); this.keyCand = { k: -1, since: 0 };
     this.quietSince = 0;
-    this.onBeat = () => {}; this.onDrop = () => {}; this.onKey = () => {};
+    // timbre: 24 log-spaced bands averaged per second into a 20 s ring; the last
+    // 5 s are compared against the 15 s before them (no overlap, so transients
+    // and section ripples average out)
+    this.edges = new Int32Array(25);
+    for (let i = 0; i <= 24; i++) this.edges[i] = Math.min(this.bins - 1, Math.max(1, Math.round(40 * Math.pow(300, i / 24) / this.hz)));
+    this.secRing = Array.from({ length: 20 }, () => new Float32Array(24)); this.secN = 0; this.secHead = 0;
+    this.secAcc = new Float32Array(24); this.secCount = 0; this.secT = 0;
+    this.onBeat = () => {}; this.onDrop = () => {}; this.onKey = () => {}; this.onTempoChange = () => {};
   }
 
   // db: Float32Array of dB values, this.bins long. now in seconds.
@@ -145,7 +152,48 @@ export class Features {
     let cmax = 1e-9; for (let i = 0; i < 12; i++) cmax = Math.max(cmax, chroma[i]);
     for (let i = 0; i < 12; i++) { chroma[i] /= cmax; this.chromaLT[i] += (chroma[i] - this.chromaLT[i]) * Math.min(1, dt * 0.2) * (f.quiet ? 0 : 1); }
     if (!f.quiet && now - (this.lastKeyT || 0) > 1) { this.lastKeyT = now; this.estimateKey(now); }
+
+    // ---- timbre shift: the last five seconds against the fifteen before them
+    if (!f.quiet) {
+      const e = this.edges, acc = this.secAcc;
+      for (let i = 0; i < 24; i++) {
+        let sum = 0; const a = e[i], z = Math.max(a + 1, e[i + 1]);
+        for (let j = a; j < z; j++) sum += Math.max(-100, db[j]);
+        acc[i] += sum / (z - a);
+      }
+      this.secCount++;
+      if (!this.secT) this.secT = now;
+      if (now - this.secT >= 1) {
+        const row = this.secRing[this.secHead];
+        for (let i = 0; i < 24; i++) { row[i] = acc[i] / this.secCount; acc[i] = 0; }
+        this.secCount = 0; this.secT = now;
+        this.secHead = (this.secHead + 1) % 20; this.secN = Math.min(20, this.secN + 1);
+        f.shift = this.secN >= 9 ? this.profileDistance() : 0;
+      }
+      f.shiftFor = f.shift > 0.45 ? f.shiftFor + dt : 0;
+    } else { f.shift = 0; f.shiftFor = 0; }
   }
+
+  // Mean band difference in dB between the two windows with loudness removed (so
+  // a volume change alone is not a change of song), scaled so 8 dB reads as 1.
+  // A chorus moves a few dB; a different record moves the tilt and the formants more.
+  profileDistance() {
+    const a = new Float32Array(24), b = new Float32Array(24), n = this.secN, lo = 4;   // skip the kick bands below ~120 Hz
+    for (let k = 0; k < n; k++) {
+      const row = this.secRing[(this.secHead - 1 - k + 40) % 20], dst = k < 5 ? a : b;
+      for (let i = 0; i < 24; i++) dst[i] += row[i];
+    }
+    const na = Math.min(5, n), nb = n - na;
+    let ma = 0, mb = 0;
+    for (let i = lo; i < 24; i++) { a[i] /= na; b[i] /= nb; ma += a[i]; mb += b[i]; }
+    ma /= 24 - lo; mb /= 24 - lo;
+    let d = 0;
+    for (let i = lo; i < 24; i++) d += Math.min(14, Math.abs((a[i] - ma) - (b[i] - mb)));
+    return Math.max(0, Math.min(1, d / (24 - lo) / 8));
+  }
+
+  // Forget the history so a new song starts with a clean reference.
+  resetProfile() { this.secN = 0; this.secCount = 0; this.secAcc.fill(0); this.f.shift = 0; this.f.shiftFor = 0; }
 
   // kick energy in the envelope within an eighth of a beat of now
   kickAround(now) {
@@ -193,7 +241,11 @@ export class Features {
       // a different tempo has to win three runs in a row before we switch
       if (this.cand.bpm && Math.abs(bpm - this.cand.bpm) / this.cand.bpm < 0.04) this.cand.n++;
       else { this.cand.bpm = bpm; this.cand.n = 1; }
-      if (this.cand.n >= 3) { f.bpm = bpm; this.cand.n = 0; this.anchor = now; this.lastBeatNo = -1; }
+      if (this.cand.n >= 3) {
+        const old = f.bpm; f.bpm = bpm; this.cand.n = 0; this.anchor = now; this.lastBeatNo = -1;
+        const ratio = bpm / old;
+        if (Math.abs(ratio - 2) > 0.08 && Math.abs(ratio - 0.5) > 0.03 && Math.abs(ratio * 3 - 2) > 0.06 && Math.abs(ratio * 2 - 3) > 0.1) this.onTempoChange(old, bpm, now);
+      }
     }
     f.period = 60 / f.bpm;
     f.tempoConf += (conf - f.tempoConf) * 0.4;

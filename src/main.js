@@ -48,6 +48,23 @@ function toast(title, sub = '', ms = 2200) {
   clearTimeout(toastTimer); toastTimer = setTimeout(() => $('toast').classList.remove('show'), ms);
 }
 
+// ---------- Now playing pill: surfaces for a few seconds every 30 s ----------
+const NP_EVERY = 30, NP_FOR = 4.5;
+let npNext = 0, npHide = 0;
+if (params.get('np') === '1') body.classList.add('np-on');
+function npPulse(now) {
+  const f = F(), m = song;
+  $('npTitle').textContent = m ? m.title : audio.source === 'file' ? audio.fileName : SOURCE_TEXT[audio.source][0];
+  const line = musicLine();
+  $('npSub').textContent = m ? m.artist + (line ? ' · ' + line : '') : line || SOURCE_TEXT[audio.source][1];
+  $('np').classList.add('show');
+  npHide = now + NP_FOR; npNext = now + NP_EVERY;
+}
+function npTick(now) {
+  if (npHide && now > npHide) { $('np').classList.remove('show'); npHide = 0; }
+  if (now > npNext && (song || F().locked)) npPulse(now);
+}
+
 // ---------- Scenes ----------
 const num = i => String(i + 1).padStart(2, '0');
 const dots = $('dots');
@@ -85,6 +102,7 @@ let pendingSwitch = false;
 const F = () => audio.features.f;
 audio.onBeat = now => {
   ecg.beat(now, audio.level.b);
+  if (npHide) { const np = $('np'); np.classList.remove('beat'); void np.offsetWidth; np.classList.add('beat'); }
   if (SCENES[u.scene].monitor) {
     $('heart').classList.remove('beat'); void $('heart').offsetWidth; $('heart').classList.add('beat');
   }
@@ -103,10 +121,12 @@ audio.features.onDrop = now => {
   u.C += 0.33; if (cTarget !== null) cTarget = u.C;
 };
 audio.features.onKey = (name, hueV) => {
+  songId.clue('key');
   if (!keyColors) return;
   cTarget = Math.floor(u.C) + hueV;
   updateNow();
 };
+audio.features.onTempoChange = () => songId.clue('tempo');
 
 // ---------- Sources ----------
 const SOURCE_TEXT = {
@@ -208,12 +228,13 @@ const songId = new SongID(audio, {
   onMatch: async (m, changed) => {
     song = m; updateNow();
     if (!changed) return;
-    toast(m.title, m.artist, 3500);
+    npPulse(last);
     if (m.genre) body.dataset.genre = m.genre.toLowerCase();
     try {
       const img = await loadArt(m.art || m.bg);
       if (song !== m) return;
       $('nowArt').style.backgroundImage = `url("${img.src}")`;
+      $('npArt').style.backgroundImage = `url("${img.src}")`;
       body.classList.add('has-art');
       renderer.setArt(img);
       const p = paletteFromImage(img);
@@ -230,7 +251,7 @@ function hueOf([r, g, b]) {
 }
 function clearSong() {
   song = null; body.classList.remove('has-art'); delete body.dataset.genre;
-  $('nowArt').style.backgroundImage = ''; renderer.setArt(null);
+  $('nowArt').style.backgroundImage = ''; $('npArt').style.backgroundImage = ''; renderer.setArt(null);
   palette.to = { ...DEFAULT_PALETTE };
 }
 function onSourceChanged() { clearSong(); songId.reset(); cTarget = null; }
@@ -378,6 +399,7 @@ function frame() {
   ecg.update(now, dt, L.m);
   renderer.render(audio, u, ecg);
   songId.update(now);
+  npTick(now);
   if (SCENES[u.scene].monitor) {
     const bpm = f.locked && f.bpm ? Math.round(f.bpm) : ecg.bpm && now - ecg.beatT < 3 ? ecg.bpm : '--';
     $('bpm').textContent = bpm;

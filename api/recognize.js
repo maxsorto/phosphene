@@ -26,6 +26,25 @@ export async function recognizeSignature(uri, samplems, language = 'en') {
   return r.json();
 }
 
+// How long the song is, from the free iTunes API (lookup by Apple Music id,
+// else a search by title and artist). Lets the visualizer know when the song
+// will end instead of polling.
+export async function lookupDuration(apple, title, artist) {
+  const urls = [];
+  if (apple) urls.push('https://itunes.apple.com/lookup?id=' + encodeURIComponent(apple) + '&entity=song');
+  if (title) urls.push('https://itunes.apple.com/search?term=' + encodeURIComponent(title + ' ' + (artist || '')) + '&entity=song&limit=1');
+  for (const url of urls) {
+    try {
+      const r = await fetch(url, { signal: AbortSignal.timeout(4000) });
+      if (!r.ok) continue;
+      const j = await r.json();
+      const ms = j.results?.find(x => x.trackTimeMillis)?.trackTimeMillis;
+      if (ms) return Math.round(ms / 1000);
+    } catch {}
+  }
+  return null;
+}
+
 // Keep only what the visualizer needs.
 export function trim(res) {
   const t = res?.track;
@@ -53,7 +72,9 @@ export default async function handler(req, res) {
   }
   try {
     const raw = await recognizeSignature(uri, Math.round(samplems), /^[a-z]{2}(-[A-Z]{2})?$/.test(language || '') ? language : 'en');
-    res.status(200).json(trim(raw));
+    const out = trim(raw);
+    if (out.match) out.match.duration = await lookupDuration(out.match.apple, out.match.title, out.match.artist);
+    res.status(200).json(out);
   } catch (e) {
     res.status(502).json({ error: String(e.message || e).slice(0, 200) });
   }

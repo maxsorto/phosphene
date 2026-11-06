@@ -61,20 +61,17 @@ function npRender(now) {
   const st = songId.state;
   let show = false, title = '', sub = '', cls = '';
   if (st === 'listening') {
-    show = true; cls = 'searching'; title = 'Searching…';
-    sub = songId.stage === 0 ? 'listening · ' + Math.ceil(Math.max(0, songId.need - songId.heard)) + ' s' : 'no match yet · listening longer';
-  } else if (st === 'identifying') {
+    show = true; cls = 'searching'; title = 'Searching';
+    sub = songId.stage === 0 ? 'listening' : 'no match yet, listening longer';
+  } else if (st === 'identifying' || st === 'suspect') {
+    // a skip hid the song: a clean "Checking". A softer doubt keeps the title, dimmed.
     show = true;
-    if (song) { title = song.title; sub = 'checking…'; cls = 'suspect'; }
-    else { title = 'Searching…'; sub = 'identifying'; cls = 'searching'; }
-  } else if (st === 'suspect') {
-    show = true; cls = 'suspect'; title = song ? song.title : 'Searching…';
-    const inS = Math.ceil(songId.checkAt() - now);
-    sub = inS > 0 ? 'might have changed · checking in ' + inS + ' s' : 'might have changed · checking';
+    if (song) { title = song.title; sub = 'checking'; cls = 'suspect'; }
+    else { title = 'Checking'; sub = 'Song ID'; cls = 'searching'; }
   } else if (st === 'unknown') {
     cls = 'searching'; title = 'Unknown song';
     const wait = songId.nextTry - now;
-    sub = wait > 3 ? 'trying again in ' + Math.ceil(wait) + ' s' : 'listening…';
+    sub = wait > 3 ? 'resting, will try again' : 'listening';
     show = now - songId.stateSince < NP_FOR || wait <= 3;
   } else if (st === 'known' && song) {
     title = song.title; const line = musicLine(); sub = song.artist + (line ? ' · ' + line : '');
@@ -91,6 +88,7 @@ function npRender(now) {
   np.classList.toggle('show', show);
   np.classList.toggle('searching', cls === 'searching');
   np.classList.toggle('suspect', cls === 'suspect');
+  np.classList.toggle('busy', st === 'listening' || st === 'identifying' || st === 'suspect');
 }
 
 // ---------- Scenes ----------
@@ -246,8 +244,9 @@ const songId = new SongID(audio, {
   onState: s => { $('idBtn').classList.toggle('busy', s === 'identifying'); },
   onMatch: async (m, changed) => {
     if (!m) { clearSongDisplay(); return; }
+    const fresh = changed || !song || song.key !== m.key;
     song = m;
-    if (!changed) return;
+    if (!fresh) return;
     body.classList.remove('has-art'); $('npArt').style.backgroundImage = ''; renderer.setArt(null);
     if (m.genre) body.dataset.genre = m.genre.toLowerCase();
     try {

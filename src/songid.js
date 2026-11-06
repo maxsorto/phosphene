@@ -40,7 +40,7 @@ export class SongID {
   reset() {
     this.match = null; this.stage = 0; this.failures = 0; this.nextTry = 0; this.musicSince = 0;
     this.expectedEnd = 0; this.clues = []; this.lastTry = 0; this.falseAlarmT = -1e9; this.lastTimbreClue = 0; this.matchT = 0;
-    this.gapAt = 0; this.suspectAt = 0; this.anyClueT = 0; this.lastChromaClue = 0;
+    this.gapAt = 0; this.suspectAt = 0; this.anyClueT = 0; this.lastChromaClue = 0; this.hidden = false;
     this.setState(this.active ? 'listening' : 'off');
   }
 
@@ -65,8 +65,13 @@ export class SongID {
     }
     this.clues.push({ t: now, w: WEIGHT[kind] || 1, kind });
     this.anyClueT = now;
-    if (kind === 'gap' || kind === 'silence') this.gapAt = now;        // the new song starts here
-    if (this.state === 'known' && this.evidence(now) >= this.doubtLevel(now)) this.doubt(now);
+    if (kind === 'gap' || kind === 'silence') {
+      // a skip: the song on screen is almost certainly gone, so stop showing it right away
+      // (the match is kept only to tell "same song" from "new song" when the answer comes)
+      this.gapAt = now; this.hidden = true; this.onMatch(null, true);
+      this.doubt(now);
+    }
+    else if (this.state === 'known' && this.evidence(now) >= this.doubtLevel(now)) this.doubt(now);
   }
   // How much it takes to doubt: a medium clue; two of them for a while after a false alarm.
   doubtLevel(now) { return now - this.falseAlarmT < FALSE_ALARM_COOL ? 3 : 2; }
@@ -82,7 +87,7 @@ export class SongID {
   }
   // The song is over (silence, or its known length ran out): drop it, listen for the next.
   songEnded(at, next = 'listening') {
-    this.match = null; this.expectedEnd = 0; this.stage = 0; this.failures = 0; this.nextTry = 0; this.musicSince = at; this.clues = [];
+    this.match = null; this.expectedEnd = 0; this.stage = 0; this.failures = 0; this.nextTry = 0; this.musicSince = at; this.clues = []; this.hidden = false;
     this.audio.features.resetProfile?.();
     this.onMatch(null, true);
     this.setState(next, at);
@@ -153,7 +158,7 @@ export class SongID {
       if (data.match) {
         const m = data.match, changed = !this.match || this.match.key !== m.key;
         if (!changed && reason === 'change') this.falseAlarmT = t;     // same song: the clues lied
-        this.match = m; this.failures = 0; this.stage = STAGES.length; this.clues = fresh; this.suspectAt = 0;
+        this.match = m; this.failures = 0; this.stage = STAGES.length; this.clues = fresh; this.suspectAt = 0; this.hidden = false;
         if (!fresh.some(c => c.kind === 'gap' || c.kind === 'silence')) this.gapAt = 0;
         if (changed) { this.matchT = t; this.audio.features.resetProfile?.(); }
         // when does it end? the offset is where the excerpt started, so add the excerpt length
@@ -164,7 +169,7 @@ export class SongID {
         this.setState('known', t);
       } else if (this.match) {
         // a change was suspected and the check found nothing: stop claiming the old song
-        this.match = null; this.expectedEnd = 0; this.clues = []; this.gapAt = 0; this.suspectAt = 0; this.onMatch(null, true);
+        this.match = null; this.expectedEnd = 0; this.clues = []; this.gapAt = 0; this.suspectAt = 0; this.hidden = false; this.onMatch(null, true);
         this.stage = 1; this.musicSince = t - Math.min(avail, 6); this.nextTry = t + 2;
         this.setState('unknown', t);
       } else {

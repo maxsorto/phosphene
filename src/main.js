@@ -68,7 +68,9 @@ function npRender(now) {
     if (song) { title = song.title; sub = 'checking…'; cls = 'suspect'; }
     else { title = 'Searching…'; sub = 'identifying'; cls = 'searching'; }
   } else if (st === 'suspect') {
-    show = true; cls = 'suspect'; title = song ? song.title : 'Searching…'; sub = 'might have changed · checking';
+    show = true; cls = 'suspect'; title = song ? song.title : 'Searching…';
+    const inS = Math.ceil(songId.checkAt() - now);
+    sub = inS > 0 ? 'might have changed · checking in ' + inS + ' s' : 'might have changed · checking';
   } else if (st === 'unknown') {
     cls = 'searching'; title = 'Unknown song';
     const wait = songId.nextTry - now;
@@ -154,6 +156,7 @@ audio.features.onKey = (name, hueV) => {
 };
 audio.features.onTempoChange = () => songId.clue('tempo');
 audio.features.onGap = (len, now) => songId.clue('gap', now);
+audio.features.onGrid = (jump, now) => songId.clue('grid', now);
 
 // ---------- Sources ----------
 const SOURCE_TEXT = {

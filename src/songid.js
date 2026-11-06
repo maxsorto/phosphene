@@ -6,7 +6,7 @@
 //   listening    music is playing, collecting enough seconds to ask (stage 0: 4 s, 1: 8 s, 2: 12 s)
 //   identifying  a fingerprint is on its way to the service
 //   known        a song was named and nothing suggests it has changed
-//   suspect      clues suggest the song may have changed; a check is due
+//   suspect      clues suggest the song may have changed; a check runs within a few seconds, always
 //   unknown      asked and got no answer; keeps listening and retries with a back-off
 //
 // It does not poll. After a match it knows roughly when the song ends (the
@@ -20,7 +20,9 @@ const STAGES = [4, 8, 12];           // seconds of music to send on each try
 const RETRY_GAP = 30, RETRY_MAX = 6, LONG_GAP = 120, SILENCE = 1.5;
 const FALLBACK_LENGTH = 240;         // when the duration is unknown, assume four minutes
 const CLUE_WINDOW = 12, MIN_GAP = 20, FALSE_ALARM_COOL = 90;
-const WEIGHT = { silence: 9, gap: 4, tempo: 2, timbre: 2, key: 1 };
+const DOUBT_DELAY = 4, CHECK_SPACING = 10, AFTER_GAP = 5, FETCH_TIMEOUT = 15000, WORKER_TIMEOUT = 8000;
+const WEIGHT = { silence: 9, gap: 4, tempo: 2, timbre: 2, chroma: 2, grid: 2, key: 1 };
+const QUIET_CHECK = 90;             // while known, one check this often if anything at all looked different
 
 export class SongID {
   constructor(audio, { onMatch = () => {}, onState = () => {}, onError = () => {}, endpoint = '/api/recognize' } = {}) {
@@ -38,7 +40,7 @@ export class SongID {
   reset() {
     this.match = null; this.stage = 0; this.failures = 0; this.nextTry = 0; this.musicSince = 0;
     this.expectedEnd = 0; this.clues = []; this.lastTry = 0; this.falseAlarmT = -1e9; this.lastTimbreClue = 0; this.matchT = 0;
-    this.checkDue = false; this.gapAt = 0;
+    this.gapAt = 0; this.suspectAt = 0; this.anyClueT = 0; this.lastChromaClue = 0;
     this.setState(this.active ? 'listening' : 'off');
   }
 
@@ -62,19 +64,21 @@ export class SongID {
       return;
     }
     this.clues.push({ t: now, w: WEIGHT[kind] || 1, kind });
+    this.anyClueT = now;
     if (kind === 'gap' || kind === 'silence') this.gapAt = now;        // the new song starts here
-    if (this.state === 'known' && this.evidence(now) >= 2) this.setState('suspect', now);
+    if (this.state === 'known' && this.evidence(now) >= this.doubtLevel(now)) this.doubt(now);
+  }
+  // How much it takes to doubt: a medium clue; two of them for a while after a false alarm.
+  doubtLevel(now) { return now - this.falseAlarmT < FALSE_ALARM_COOL ? 3 : 2; }
+  doubt(now) { this.suspectAt = now; this.setState('suspect', now); }
+  // When the owed check will run: a short delay after the doubt began, spaced from the
+  // last check, and after a skip only once a few seconds of the new song are in.
+  checkAt() {
+    return Math.max((this.suspectAt || 0) + DOUBT_DELAY, this.lastTry + CHECK_SPACING, this.gapAt ? this.gapAt + AFTER_GAP : 0);
   }
   evidence(now) {
     this.clues = this.clues.filter(c => now - c.t < CLUE_WINDOW);
     return this.clues.reduce((s, c) => s + c.w, 0);
-  }
-  // How much evidence it takes: more right after a match, much more after a false alarm.
-  needed(now) {
-    let n = 3;
-    if (now - this.matchT < 45) n = 4;
-    if (now - this.falseAlarmT < FALSE_ALARM_COOL) n = 5;
-    return n;
   }
   // The song is over (silence, or its known length ran out): drop it, listen for the next.
   songEnded(at, next = 'listening') {
@@ -107,18 +111,16 @@ export class SongID {
     if (this.match) {
       if (this.expectedEnd && now > this.expectedEnd) { this.songEnded(this.expectedEnd); return; }
       if (f.shiftFor > 3 && now - this.lastTimbreClue > MIN_GAP) { this.lastTimbreClue = now; this.clue('timbre', now); }
-      const ev = this.evidence(now);
-      if (ev >= this.needed(now)) this.checkDue = true;             // enough clues: a check is owed, even if they expire first
-      if ((ev >= 2 || this.checkDue) && this.state === 'known') this.setState('suspect', now);   // one weak clue is not a doubt
-      if (ev < 2 && !this.checkDue && this.state === 'suspect') this.setState('known', now);
-      if (this.checkDue) {
-        // after a skip, wait for a few seconds of the new song and send only those;
-        // a skip is strong, so the usual spacing between checks is relaxed
-        const since = this.gapAt ? now - this.gapAt : 99, spacing = this.gapAt && since < 30 ? 6 : MIN_GAP;
-        if (now - this.lastTry >= spacing && since >= 5 && heard >= 5) {
-          this.checkDue = false; this.gapAt = 0; this.clues = [];
-          this.identify(Math.min(8, since, heard), now, false, 'change');
-        }
+      if (f.chromaShiftFor > 3 && now - this.lastChromaClue > MIN_GAP) { this.lastChromaClue = now; this.clue('chroma', now); }
+      if (this.state === 'known' && this.evidence(now) >= this.doubtLevel(now)) this.doubt(now);
+      // a crossfade between similar songs can slip past every clue: if anything at all looked
+      // different since the last check and that was a while ago, one quiet check
+      if (this.state === 'known' && now - this.lastTry > QUIET_CHECK && this.anyClueT > this.lastTry) this.doubt(now);
+      if (this.state === 'suspect' && now >= this.checkAt() && heard >= 5) {
+        // doubt is a promise to check: send the newest audio (only what came after a skip)
+        const since = this.gapAt ? now - this.gapAt : 99;
+        this.clues = [];
+        this.identify(Math.min(8, since, heard), now, false, 'change');
       }
       return;
     }
@@ -142,14 +144,17 @@ export class SongID {
       const r = await fetch(this.endpoint, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ uri: sig.uri, samplems: sig.samplems, language: navigator.language?.slice(0, 5) }),
+        signal: AbortSignal.timeout(FETCH_TIMEOUT),
       });
       if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || 'service ' + r.status);
       const data = await r.json();
       const t = performance.now() / 1000;
+      const fresh = this.clues.filter(c => c.t > now);               // clues that arrived while we were asking still count
       if (data.match) {
         const m = data.match, changed = !this.match || this.match.key !== m.key;
         if (!changed && reason === 'change') this.falseAlarmT = t;     // same song: the clues lied
-        this.match = m; this.failures = 0; this.stage = STAGES.length; this.clues = []; this.checkDue = false; this.gapAt = 0;
+        this.match = m; this.failures = 0; this.stage = STAGES.length; this.clues = fresh; this.suspectAt = 0;
+        if (!fresh.some(c => c.kind === 'gap' || c.kind === 'silence')) this.gapAt = 0;
         if (changed) { this.matchT = t; this.audio.features.resetProfile?.(); }
         // when does it end? the offset is where the excerpt started, so add the excerpt length
         const into = (m.offset ?? 0) + Math.min(seconds, avail);
@@ -159,7 +164,7 @@ export class SongID {
         this.setState('known', t);
       } else if (this.match) {
         // a change was suspected and the check found nothing: stop claiming the old song
-        this.match = null; this.expectedEnd = 0; this.clues = []; this.checkDue = false; this.gapAt = 0; this.onMatch(null, true);
+        this.match = null; this.expectedEnd = 0; this.clues = []; this.gapAt = 0; this.suspectAt = 0; this.onMatch(null, true);
         this.stage = 1; this.musicSince = t - Math.min(avail, 6); this.nextTry = t + 2;
         this.setState('unknown', t);
       } else {
@@ -172,9 +177,9 @@ export class SongID {
       }
     } catch (e) {
       const t = performance.now() / 1000;
-      this.nextTry = t + 60;
+      this.nextTry = t + 60; this.lastTry = t + 30; this.clues = [];          // back off, and do not re-doubt at once
       if (this.debug) console.warn('[songid] error', e);
-      this.onError(e.message);
+      this.onError(e.name === 'TimeoutError' ? 'Song ID timed out' : e.message);
       this.setState(this.match ? 'known' : before === 'identifying' ? 'listening' : before, t);
     } finally {
       this.busy = false;
@@ -185,6 +190,7 @@ export class SongID {
     return new Promise(res => {
       const id = ++this.reqId;
       this.pending.set(id, res);
+      setTimeout(() => { if (this.pending.has(id)) { this.pending.delete(id); res({ error: 'fingerprint timed out' }); } }, WORKER_TIMEOUT);
       this.worker.postMessage({ id, samples, rate: this.audio.tapRate }, [samples.buffer]);
     });
   }

@@ -61,7 +61,7 @@ export class AudioEngine {
       this.ana.fftSize = ANA_FFT; this.ana.smoothingTimeConstant = 0.2;
       const prev = this.features;
       this.features = new Features(this.actx.sampleRate, ANA_FFT);
-      for (const k of ['onBeat', 'onDrop', 'onKey', 'onTempoChange', 'onGap']) this.features[k] = prev[k];   // keep the listeners
+      for (const k of ['onBeat', 'onDrop', 'onKey', 'onTempoChange', 'onGap', 'onGrid']) this.features[k] = prev[k];   // keep the listeners
       this.tapRate = this.actx.sampleRate;
       this.tap = new Float32Array(Math.round(this.tapRate * TAP_SECONDS));
     }

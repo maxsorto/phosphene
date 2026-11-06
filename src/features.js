@@ -44,7 +44,7 @@ export class Features {
       bpm: 0, period: 0.5, phase: 0, bar: 0, beatNo: 0, beatPulse: 0, tempoConf: 0, locked: false,
       energy: 0, lift: 1, build: 0, drop: 0, quiet: true, quietFor: 0,
       chroma: new Float32Array(12), key: -1, minor: false, keyName: '', keyConf: 0, keyHue: 0,
-      centroid: 0, pitchHz: 0, shift: 0, shiftFor: 0,
+      centroid: 0, pitchHz: 0, shift: 0, shiftFor: 0, chromaShift: 0, chromaShiftFor: 0,
     };
     this.fast = 0; this.slow = 0; this.peakE = 1e-3; this.slowHist = []; this.lastDrop = -10;
     this.anchor = 0; this.lastTempoT = 0; this.lastPhaseT = 0; this.cand = { bpm: 0, n: 0 };
@@ -58,7 +58,9 @@ export class Features {
     for (let i = 0; i <= 24; i++) this.edges[i] = Math.min(this.bins - 1, Math.max(1, Math.round(40 * Math.pow(300, i / 24) / this.hz)));
     this.secRing = Array.from({ length: 20 }, () => new Float32Array(24)); this.secN = 0; this.secHead = 0;
     this.secAcc = new Float32Array(24); this.secCount = 0; this.secT = 0;
-    this.onBeat = () => {}; this.onDrop = () => {}; this.onKey = () => {}; this.onTempoChange = () => {}; this.onGap = () => {};
+    this.chRing = Array.from({ length: 20 }, () => new Float32Array(12)); this.chAcc = new Float32Array(12);
+    this.tempoSince = 0; this.lockSince = 0; this.wasLocked = false; this.gridT = 0;
+    this.onBeat = () => {}; this.onDrop = () => {}; this.onKey = () => {}; this.onTempoChange = () => {}; this.onGap = () => {}; this.onGrid = () => {};
   }
 
   // db: Float32Array of dB values, this.bins long. now in seconds. rms: time-domain
@@ -157,6 +159,8 @@ export class Features {
     }
     f.beatPulse *= Math.pow(0.02, dt);
     f.locked = f.tempoConf > 0.3 && !f.quiet;
+    if (f.locked && !this.wasLocked) this.lockSince = now;
+    this.wasLocked = f.locked;
 
     // ---- chroma and key (long-term average, hysteresis on changes)
     let cmax = 1e-9; for (let i = 0; i < 12; i++) cmax = Math.max(cmax, chroma[i]);
@@ -171,16 +175,20 @@ export class Features {
         for (let j = a; j < z; j++) sum += Math.max(-100, db[j]);
         acc[i] += sum / (z - a);
       }
+      for (let i = 0; i < 12; i++) this.chAcc[i] += chroma[i];
       this.secCount++;
       if (!this.secT) this.secT = now;
       if (now - this.secT >= 1) {
-        const row = this.secRing[this.secHead];
+        const row = this.secRing[this.secHead], crow = this.chRing[this.secHead];
         for (let i = 0; i < 24; i++) { row[i] = acc[i] / this.secCount; acc[i] = 0; }
+        for (let i = 0; i < 12; i++) { crow[i] = this.chAcc[i] / this.secCount; this.chAcc[i] = 0; }
         this.secCount = 0; this.secT = now;
         this.secHead = (this.secHead + 1) % 20; this.secN = Math.min(20, this.secN + 1);
         f.shift = this.secN >= 9 ? this.profileDistance() : 0;
+        f.chromaShift = this.secN >= 9 ? this.chromaDistance() : 0;
       }
       f.shiftFor = f.shift > 0.45 ? f.shiftFor + dt : 0;
+      f.chromaShiftFor = f.chromaShift > 0.3 ? f.chromaShiftFor + dt : 0;
     } else { f.shift = 0; f.shiftFor = 0; }
   }
 
@@ -202,11 +210,23 @@ export class Features {
     return Math.max(0, Math.min(1, d / (24 - lo) / 8));
   }
 
+  // Harmonic content of the last five seconds against the fifteen before: 1 - cosine similarity.
+  chromaDistance() {
+    const a = new Float32Array(12), b = new Float32Array(12), n = this.secN;
+    for (let k = 0; k < n; k++) {
+      const row = this.chRing[(this.secHead - 1 - k + 40) % 20], dst = k < 5 ? a : b;
+      for (let i = 0; i < 12; i++) dst[i] += row[i];
+    }
+    let dot = 0, na = 0, nb = 0;
+    for (let i = 0; i < 12; i++) { dot += a[i] * b[i]; na += a[i] * a[i]; nb += b[i] * b[i]; }
+    return Math.max(0, Math.min(1, 1 - dot / Math.sqrt(na * nb + 1e-9)));
+  }
+
   // A new source: forget the level and the timbre history.
   resetLevel() { this.lvl = undefined; this.quietT = 0; this.gapT = 0; this.quietSince = 0; this.resetProfile(); }
 
   // Forget the history so a new song starts with a clean reference.
-  resetProfile() { this.secN = 0; this.secCount = 0; this.secAcc.fill(0); this.f.shift = 0; this.f.shiftFor = 0; }
+  resetProfile() { this.secN = 0; this.secCount = 0; this.secAcc.fill(0); this.chAcc.fill(0); this.f.shift = 0; this.f.shiftFor = 0; this.f.chromaShift = 0; this.f.chromaShiftFor = 0; }
 
   // kick energy in the envelope within an eighth of a beat of now
   kickAround(now) {
@@ -248,6 +268,7 @@ export class Features {
       else if (Math.abs(bpm / f.bpm - 0.5) < 0.02) bpm *= 2;
     }
     if (!f.bpm || Math.abs(bpm - f.bpm) / f.bpm < 0.04) {
+      if (!f.bpm) this.tempoSince = now;
       f.bpm = f.bpm ? f.bpm + (bpm - f.bpm) * 0.3 : bpm;
       this.cand.n = 0;
     } else {
@@ -256,8 +277,9 @@ export class Features {
       else { this.cand.bpm = bpm; this.cand.n = 1; }
       if (this.cand.n >= 3) {
         const old = f.bpm; f.bpm = bpm; this.cand.n = 0; this.anchor = now; this.lastBeatNo = -1;
-        const ratio = bpm / old;
-        if (Math.abs(ratio - 2) > 0.08 && Math.abs(ratio - 0.5) > 0.03 && Math.abs(ratio * 3 - 2) > 0.06 && Math.abs(ratio * 2 - 3) > 0.1) this.onTempoChange(old, bpm, now);
+        const ratio = bpm / old, stable = now - this.tempoSince > 12;         // a switch during lock-in is not a change of song
+        this.tempoSince = now;
+        if (stable && Math.abs(ratio - 2) > 0.08 && Math.abs(ratio - 0.5) > 0.03 && Math.abs(ratio * 3 - 2) > 0.06 && Math.abs(ratio * 2 - 3) > 0.1) this.onTempoChange(old, bpm, now);
       }
     }
     f.period = 60 / f.bpm;
@@ -283,6 +305,8 @@ export class Features {
     if (!this.anchor) { this.anchor = measured; return; }
     let d = (measured - this.anchor) % P;                    // wrapped into [-P/2, P/2]
     if (d > P / 2) d -= P; if (d < -P / 2) d += P;
+    // a steady song keeps its grid; a jump of a third of a beat after a stable lock is a clue
+    if (this.f.locked && now - this.lockSince > 10 && Math.abs(d) > P * 0.3 && now - this.gridT > 10) { this.gridT = now; this.onGrid(d / P, now); }
     this.anchor += d * 0.25;
     while (now - this.anchor > P * 64) this.anchor += P * 64;   // keep the number small
   }

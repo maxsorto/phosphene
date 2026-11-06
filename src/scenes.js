@@ -277,8 +277,8 @@ vec3 scene(vec2 p){
   // tonearm: on the groove while the song is known, lifted to its rest when unsure
   // (only where there is room beside the record)
   if(R.x > R.y*1.15){
-    vec2 pv = vec2(min(.6, .5*R.x/R.y-.08), .42);
-    float play = -1.9 - .35*fract(T*.012) + .004*KICK, rest = -1.55;
+    vec2 pv = vec2(min(.6, .5*R.x/R.y-.08), .3);
+    float play = -1.9 - .35*fract(T*.012) + .004*KICK, rest = -1.72;   // rest: just off the record's edge
     float th = mix(rest, play, smoothstep(0.,1.,ARTC));
     vec2 hd = pv + .52*vec2(cos(th),sin(th));
     float arm = seg(p, pv, hd);

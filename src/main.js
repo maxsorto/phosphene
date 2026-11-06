@@ -50,11 +50,11 @@ function toast(title, sub = '', ms = 2200) {
 
 // ---------- Now playing pill (top right) ----------
 // Rendered from Song ID's state every frame, so it never claims more than it knows:
-// Searching (listening / identifying), the song (a few seconds when named and every
-// 30 s after), the song dimmed with "might have changed" while clues pile up,
-// "Unknown song" when a check comes back empty.
-const NP_EVERY = 30, NP_FOR = 4.5;
-let npShownAt = -1e9, npNext = 0, npKey = '';
+// Searching (listening / identifying), the song for a few seconds when it is named or
+// changes (never on a timer), the song dimmed while a doubt is checked, "Checking"
+// after a skip, "Unknown song" when a check comes back empty.
+const NP_FOR = 6;
+let npShownAt = -1e9, npKey = '';
 if (params.get('np') === '1') body.classList.add('np-on');
 const np = $('np');
 function npRender(now) {
@@ -64,10 +64,10 @@ function npRender(now) {
     show = true; cls = 'searching'; title = 'Searching';
     sub = songId.stage === 0 ? 'listening' : 'no match yet, listening longer';
   } else if (st === 'identifying' || st === 'suspect') {
-    // a skip hid the song: a clean "Checking". A softer doubt keeps the title, dimmed.
-    show = true;
-    if (song) { title = song.title; sub = 'checking'; cls = 'suspect'; }
-    else { title = 'Checking'; sub = 'Song ID'; cls = 'searching'; }
+    // a skip hid the song: a clean "Checking". A softer doubt is checked silently; the
+    // card only comes back if the answer is a different song.
+    if (song) { show = false; }
+    else { show = true; title = 'Checking'; sub = 'Song ID'; cls = 'searching'; }
   } else if (st === 'unknown') {
     cls = 'searching'; title = 'Unknown song';
     const wait = songId.nextTry - now;
@@ -75,12 +75,10 @@ function npRender(now) {
     show = now - songId.stateSince < NP_FOR || wait <= 3;
   } else if (st === 'known' && song) {
     title = song.title; const line = musicLine(); sub = song.artist + (line ? ' · ' + line : '');
-    const key = 'known:' + song.key;
-    if (npKey !== key) { npKey = key; npShownAt = now; npNext = now + NP_EVERY; }          // just named (or confirmed): show now
-    else if (now >= npNext) { npShownAt = now; npNext = now + NP_EVERY; }
+    if (npKey !== song.key) { npKey = song.key; npShownAt = now; }   // a song we have not shown yet: show it, then rest
     show = now - npShownAt < NP_FOR;
   }
-  if (st !== 'known') npKey = st;
+  if (!song) npKey = '';                                             // cleared (skip, silence, unknown): the next song is news again
   if (show) {
     if ($('npTitle').textContent !== title) $('npTitle').textContent = title;
     if ($('npSub').textContent !== sub) $('npSub').textContent = sub;

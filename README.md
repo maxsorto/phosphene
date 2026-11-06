@@ -94,7 +94,7 @@ Every scene draws into a feedback buffer. Each frame the previous image is melte
 
 With the microphone or a shared tab, phosphene names what is playing. After four seconds of music it fingerprints the audio and asks; if there is no match it tries again with eight and then twelve seconds, then backs off. When a song is named:
 
-- a now-playing card slides in at the top right with the cover, title, artist, tempo and key, for a few seconds every thirty seconds (while it is still working out the song it reads "Searching…"); the dock only ever shows the source
+- a now-playing card slides in at the top right with the cover, title, artist, tempo and key, for a few seconds when a song is named or changes, never on a timer (while it is still working out the song it reads "Searching"); the dock only ever shows the source
 - the palette eases toward the cover's two most vivid colours
 - the Vinyl label and the Oracle's iris show the artwork
 

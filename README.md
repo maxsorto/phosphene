@@ -75,10 +75,10 @@ No install, no account, no build step. The visuals and all the analysis run on y
 | 09 | Neon Horizon | Perspective grid flyover, striped sun, stars, three ridges of mountains | One grid line scrolls past per beat; the mountains are the last seconds of the spectrogram; the sun pulses on the kick, the stars twinkle on hats |
 | 10 | Pulsar | 40 ridgelines with hidden-line removal, after the plot of pulsar CP 1919 made famous by *Unknown Pleasures* | Every kick is drawn as a heartbeat; each line is 0.15 s further in the past, so the rhythm cascades back |
 | 11 | Vitals | A bedside monitor: green ECG sweep, a cyan pleth trace of the bass, grid, erase gap and a live BPM readout | Each kick fires a PQRST complex; the BPM is the tracked tempo |
-| 12 | Vinyl | A record spinning at 33 1/3 with a tonearm that slowly tracks inward | Grooves light up by frequency, kicks nudge the platter, and the label is the album art once the song is named |
+| 12 | Vinyl | A record spinning at 33 1/3 with a tonearm that slowly tracks inward | Grooves light up by frequency, kicks nudge the platter. The label is the album cover once the song is named, and the tonearm lifts whenever phosphene is unsure what is playing |
 | 13 | Aurora | Eighteen curtains of light with streaks, stars and a dark rippled lake | Curtain height on the mids, brightness per band, hats twinkle the stars, kicks flare the streaks |
 | 14 | Goop | Eight gooey blobs that drip down the screen and merge | Blob size per band, kicks swell them, snares flash the rims. Turn Goo up. |
-| 15 | Oracle | An all-seeing eye, ringed by a kaleidoscope of smaller eyes | The iris is the spectrum, the pupil dilates with the energy and the kick, drops blink, album art shows in the iris |
+| 15 | Oracle | An all-seeing eye, ringed by a kaleidoscope of smaller eyes | The iris is the spectrum, the pupil dilates with the energy and the kick, drops blink; the cover shows in the iris while the song is known |
 | 16 | Sigil | Rune rings turning at different speeds around nested polygons | Ring radius per band, polygons flash on kicks and snares, the centre pulses on the beat |
 | 17 | Oil Slick | Thin-film interference rainbows on black oil | Film thickness on the mids, kicks ripple it, snares shimmer it, highs catch the light |
 | 18 | Chladni | Sand gathering at the nodes of a vibrating plate | The mode numbers come from the dominant pitch and the mids, so chords reshape the pattern; grains jump on kicks |
@@ -98,7 +98,20 @@ With the microphone or a shared tab, phosphene names what is playing. After four
 - the palette eases toward the cover's two most vivid colours
 - the Vinyl label and the Oracle's iris show the artwork
 
-It does not poll. The match says how far into the song the excerpt was, and a free lookup says how long the song is, so phosphene knows roughly when it ends and checks again just after that. Before then it only reacts to clues that the song has changed: a gap of silence (strong), the tempo tracker switching to a new tempo (medium), a sustained shift in timbre, measured as the last couple of seconds of the spectrum drifting away from the last twelve (medium), or a new key (weak). Enough clues within twelve seconds trigger one check; if that comes back as the same song, the bar is raised for a minute and a half. That is what makes it work from a microphone, where crossfades and room noise hide the silences. Press `I` to identify right now. The switch in Settings turns it off entirely (remembered).
+It does not poll, and it is honest about what it knows. The card has states:
+
+- **Searching…** while it listens (it says how many seconds it still needs) and while a fingerprint is on its way
+- **the song**, with cover, artist, tempo and key, when named
+- **the song, dimmed, "might have changed · checking"** when clues say the song may have changed and a check is owed
+- **Unknown song** when a check comes back empty; it keeps listening and retries with a back-off
+
+The match says how far into the song the excerpt was, and a free lookup says how long the song is, so phosphene knows roughly when it ends and checks again just after that. Before then only clues trigger a check, each with a weight: a skip gap (the audio drops to the noise floor for a fraction of a second, then music again: the signature of pressing Next, and the strongest clue), a long silence, the tempo tracker switching to a new tempo, a sustained shift in timbre (the last five seconds of the spectrum against the fifteen before them), or a new key. Enough weight within twelve seconds owes a check; after a skip it waits for five seconds of the new song and sends only those. If the check comes back as the same song, the bar is raised for a minute and a half. Quiet is judged relative to the running music level, not an absolute number, so a faint microphone works the same as a loud tab.
+
+Why not media keys: the browser cannot see Next or Previous. The system routes them to whichever app is playing, which is Spotify, not phosphene; if phosphene claimed them it would steal your skip. The gap a skip leaves in the audio is the next best thing.
+
+Scenes that show the cover (Vinyl, Oracle) share one confidence value: the art is full while the song is known, greys out while a change is suspected, and clears when it is not. On Vinyl the tonearm lifts off the record whenever phosphene is not sure what is playing.
+
+Press `I` to identify right now. The switch in Settings turns it off entirely (remembered).
 
 How it works: the fingerprint is the same compact format the Shazam app sends, generated in a Web Worker from the last few seconds of audio (16 kHz mono, sliding 2048-point spectra, peaks picked against their neighbours in time and frequency, packed into about four kilobytes). A tiny serverless function on Vercel forwards it to the recognition service and returns the title, artist, artwork and genre. The implementation in `src/shazam.js` was written from the public description of the format and checks byte-for-byte against the SongRec reference; it is also about forty times faster than the JavaScript ports it was checked against. The service is free but unofficial, so it may stop working one day without notice.
 
@@ -156,6 +169,8 @@ Handy for streaming (OBS browser source), projectors and sharing a look:
 | `?auto=0` | Stay on one scene |
 | `?colors=0.45` | Fix the starting palette (0 to 1). Otherwise it is random each visit |
 | `?goo=0.8` | Set the melt amount (0 to 1) |
+| `?np=1` | Keep the now-playing card in clean mode (for a stream overlay) |
+| `?debug` | Log Song ID's states and clues to the console, expose `window.phosphene` |
 | `?demo` | Skip the source picker and start on the demo beat |
 
 Example: `https://phosphene-viz.vercel.app/?scene=19&ui=0&auto=0&goo=0.7`

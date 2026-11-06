@@ -5,7 +5,7 @@
 // adapts to keep the frame rate smooth.
 import { VS, DISPLAY_FS, POINTS_VS, POINTS_FS, SCENES, sceneSource } from './shaders.js';
 
-const F1 = ['T', 'B', 'M', 'H', 'BEAT', 'K', 'Z', 'C', 'TR', 'KICK', 'SNARE', 'HAT', 'PH', 'BAR', 'BT', 'BPM', 'EN', 'DROP', 'BP', 'GOO', 'IRID', 'PIT', 'HASART', 'PK'];
+const F1 = ['T', 'B', 'M', 'H', 'BEAT', 'K', 'Z', 'C', 'TR', 'KICK', 'SNARE', 'HAT', 'PH', 'BAR', 'BT', 'BPM', 'EN', 'DROP', 'BP', 'GOO', 'IRID', 'PIT', 'HASART', 'ARTC', 'PK'];
 const SG_ROWS = 256, SG_INTERVAL = 1 / 30;
 
 export class Renderer {

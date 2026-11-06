@@ -59,7 +59,9 @@ export class AudioEngine {
       this.vis.fftSize = 1024; this.vis.smoothingTimeConstant = 0.72;
       this.ana = this.actx.createAnalyser();
       this.ana.fftSize = ANA_FFT; this.ana.smoothingTimeConstant = 0.2;
+      const prev = this.features;
       this.features = new Features(this.actx.sampleRate, ANA_FFT);
+      for (const k of ['onBeat', 'onDrop', 'onKey', 'onTempoChange', 'onGap']) this.features[k] = prev[k];   // keep the listeners
       this.tapRate = this.actx.sampleRate;
       this.tap = new Float32Array(Math.round(this.tapRate * TAP_SECONDS));
     }
@@ -106,6 +108,7 @@ export class AudioEngine {
   attach(node) {
     node.connect(this.vis); node.connect(this.ana);
     if (this.tapNode) node.connect(this.tapNode);
+    this.features.resetLevel();
   }
 
   stop() {
@@ -196,6 +199,8 @@ export class AudioEngine {
       this.vis.getByteTimeDomainData(this.wave);
       this.ana.getFloatFrequencyData(this.db);
     }
+    let sq = 0; for (let i = 0; i < 1024; i++) { const d = (this.wave[i] - 128) / 128; sq += d * d; }
+    this.rms = Math.sqrt(sq / 1024);
     const rb = this.band(1, 7), rm = this.band(7, 70), rh = this.band(70, 300);
     this.follow('b', rb); this.follow('m', rm); this.follow('h', rh);
     this.bassAvg += (rb - this.bassAvg) * 0.03;
@@ -203,6 +208,6 @@ export class AudioEngine {
       this.lastBeat = now; this.level.beat = 1; this.onBeat(now);
     }
     this.level.beat *= Math.pow(0.02, dt);
-    this.features.update(this.db, now, dt);
+    this.features.update(this.db, now, dt, this.rms);
   }
 }

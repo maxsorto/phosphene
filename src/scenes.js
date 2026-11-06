@@ -2,6 +2,12 @@
 // settings: zoom (how hard the previous frame is pulled inward), swirl, melt
 // (curl-noise smearing, scaled by the Goo setting), keep (trail length) and
 // drip (downward ooze). Uniforms are listed at the top of shaders.js.
+//
+// Flags: ecg (reads the heartbeat ring), monitor (shows the BPM overlay),
+// points (adds the particle pass), art (shows the album cover). Every art
+// scene scales its cover by ARTC, the confidence that the cover is the song
+// playing: 1 while it is known, 0.4 while a change is suspected, 0 otherwise.
+// So all of them appear, grey out and clear together.
 
 export const SCENES = [
   // ------------------------------------------------------------ 01
@@ -238,7 +244,7 @@ vec3 scene(vec2 p){
   return c;
 }` },
   // ------------------------------------------------------------ 12
-  { name: 'Vinyl', blurb: 'Grooves lit by the spectrum', fb: { zoom: 0, keep: .35, melt: 0 }, glsl: `
+  { name: 'Vinyl', blurb: 'Grooves lit by the spectrum, the cover on the label', art: true, fb: { zoom: 0, keep: .35, melt: 0 }, glsl: `
 vec3 scene(vec2 p){
   const float R0 = .46, L = .15;
   float r = length(p), a = atan(p.y,p.x);
@@ -256,25 +262,31 @@ vec3 scene(vec2 p){
     c += vec3(.9)*sheen*(.22+.45*groove)*step(L+.01, r);
     if(r < L){
       vec2 q = rot(-spin)*p;
-      if(HASART > .5) c = texture(ART, q/(2.*L)+.5).rgb*(.85+.3*B);
-      else {
-        c = pal(C+.1)*.8*(.85+.3*B);
-        c *= 1.-.6*smoothstep(.0025,0.,abs(r-.125))-.6*smoothstep(.002,0.,abs(r-.04));
-        c = mix(c, vec3(.95), smoothstep(.0028,0.,abs(q.y-.075))*step(abs(q.x),.045));
-      }
+      vec3 lab = pal(C+.1)*.8*(.85+.3*B);
+      lab *= 1.-.6*smoothstep(.0025,0.,abs(r-.125))-.6*smoothstep(.002,0.,abs(r-.04));
+      lab = mix(lab, vec3(.95), smoothstep(.0028,0.,abs(q.y-.075))*step(abs(q.x),.045));
+      float sure = HASART*ARTC;                   // the cover is on the label only while the song is known
+      vec3 art = texture(ART, q/(2.*L)+.5).rgb*(.85+.3*B);
+      art = mix(vec3(dot(art,vec3(.3,.59,.11))), art, smoothstep(.3,1.,sure));   // greys out while in doubt
+      c = mix(lab, art, smoothstep(0.,.3,sure));
       c *= smoothstep(.011,.015,r)*smoothstep(L,L-.004,r);
     }
     c *= smoothstep(R0, R0-.004, r);
   }
   c += vec3(.6)*.0015/(abs(r-R0)+.002)*(.3+B);
-  // tonearm, slowly tracking inward
-  vec2 pv = vec2(.6,.42); float th = -1.9 - .35*fract(T*.012) + .004*KICK;
-  vec2 hd = pv + .52*vec2(cos(th),sin(th));
-  float arm = seg(p, pv, hd);
-  c = mix(c, vec3(.82), smoothstep(.011,.006,arm));
-  c = mix(c, vec3(.95), smoothstep(.028,.02,length(p-hd)));
-  c = mix(c, vec3(.3), smoothstep(.045,.04,length(p-pv)));
-  c += vec3(.4)*.0015/(abs(length(p-pv)-.045)+.003);
+  // tonearm: on the groove while the song is known, lifted to its rest when unsure
+  // (only where there is room beside the record)
+  if(R.x > R.y*1.15){
+    vec2 pv = vec2(min(.6, .5*R.x/R.y-.08), .42);
+    float play = -1.9 - .35*fract(T*.012) + .004*KICK, rest = -1.55;
+    float th = mix(rest, play, smoothstep(0.,1.,ARTC));
+    vec2 hd = pv + .52*vec2(cos(th),sin(th));
+    float arm = seg(p, pv, hd);
+    c = mix(c, vec3(.82), smoothstep(.011,.006,arm));
+    c = mix(c, vec3(.95), smoothstep(.028,.02,length(p-hd)));
+    c = mix(c, vec3(.3), smoothstep(.045,.04,length(p-pv)));
+    c += vec3(.4)*.0015/(abs(length(p-pv)-.045)+.003);
+  }
   return c;
 }` },
   // ------------------------------------------------------------ 13
@@ -331,7 +343,7 @@ vec3 scene(vec2 p){
   return c*.9;
 }` },
   // ------------------------------------------------------------ 15
-  { name: 'Oracle', blurb: 'An all-seeing eye, iris of spectrum', fb: { zoom: .3, melt: .8 }, glsl: `
+  { name: 'Oracle', blurb: 'An all-seeing eye, the cover in its iris', art: true, fb: { zoom: .3, melt: .8 }, glsl: `
 vec3 eye(vec2 p, float s){
   p /= s;
   float open = 1. - .95*DROP;
@@ -343,7 +355,7 @@ vec3 eye(vec2 p, float s){
   float t = clamp((r-pup)/(iris-pup),0.,1.);
   vec3 ic = pal(t*.6 + C + .1*sin(a*7.+T))*(.3 + 1.5*spec(t*.5+.02))*(.6+.4*noise(vec2(a*6.,r*30.)+T*.2));
   ic += vec3(1)*pow(abs(sin(a*K*2.+r*40.-T*3.)),20.)*.25*(.5+H);
-  if(HASART > .5) ic = mix(ic, texture(ART, vec2(cos(a),sin(a))*t*.5+.5).rgb*1.2, .5);
+  if(HASART > .5) ic = mix(ic, texture(ART, vec2(cos(a),sin(a))*t*.5+.5).rgb*1.2, .5*ARTC);
   vec3 col = vec3(.95,.93,.9)*(1.-.15*r);
   col = mix(col, ic, smoothstep(iris+.01, iris-.01, r));
   col = mix(col, vec3(0), smoothstep(pup+.01, pup-.01, r));

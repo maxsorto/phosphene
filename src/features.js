@@ -58,11 +58,12 @@ export class Features {
     for (let i = 0; i <= 24; i++) this.edges[i] = Math.min(this.bins - 1, Math.max(1, Math.round(40 * Math.pow(300, i / 24) / this.hz)));
     this.secRing = Array.from({ length: 20 }, () => new Float32Array(24)); this.secN = 0; this.secHead = 0;
     this.secAcc = new Float32Array(24); this.secCount = 0; this.secT = 0;
-    this.onBeat = () => {}; this.onDrop = () => {}; this.onKey = () => {}; this.onTempoChange = () => {};
+    this.onBeat = () => {}; this.onDrop = () => {}; this.onKey = () => {}; this.onTempoChange = () => {}; this.onGap = () => {};
   }
 
-  // db: Float32Array of dB values, this.bins long. now in seconds.
-  update(db, now, dt) {
+  // db: Float32Array of dB values, this.bins long. now in seconds. rms: time-domain
+  // level 0..1 (optional); with it, "quiet" is judged against the input's own noise floor.
+  update(db, now, dt, rms = null) {
     const f = this.f, r = this.range;
     // ---- spectral flux per band, on log magnitude so quiet tracks count too
     let fx = { kick: 0, snare: 0, hat: 0, any: 0 }, e = 0, cen = 0, cw = 0, pk = 0, pkI = 1;
@@ -97,13 +98,22 @@ export class Features {
     }
 
     // ---- energy, lift and drops
-    const rms = Math.sqrt(e / 1200);
-    this.fast += (rms - this.fast) * Math.min(1, dt * 8);
-    this.slow += (rms - this.slow) * Math.min(1, dt * 0.25);
+    const rms0 = Math.sqrt(e / 1200);
+    this.fast += (rms0 - this.fast) * Math.min(1, dt * 8);
+    this.slow += (rms0 - this.slow) * Math.min(1, dt * 0.25);
     this.peakE = Math.max(this.peakE * Math.pow(0.97, dt), this.fast, 1e-4);
     f.energy = Math.min(1, this.fast / this.peakE);
     f.lift = this.slow > 1e-5 ? this.fast / this.slow : 1;
-    f.quiet = rms < 2e-4;
+    if (rms !== null) {
+      // quiet is relative to the running music level (a 3 s average), so it works the
+      // same for a loud tab and a faint microphone: 18 dB below it is a gap
+      this.lvl = this.lvl === undefined ? rms : this.lvl + (rms - this.lvl) * Math.min(1, dt / 3);
+      const quietRaw = rms < Math.max(0.0012, this.lvl * 0.12);
+      // a skip leaves a signature: a drop to the floor for 0.12 to 2 s, then music again
+      if (quietRaw) this.quietT = (this.quietT || 0) + dt;
+      else { if (this.quietT > 0.12 && this.quietT < 2 && now - (this.gapT || 0) > 10) { this.gapT = now; this.onGap(this.quietT, now); } this.quietT = 0; }
+      f.quiet = this.quietT > 0.35;                      // a dip between beats is not silence
+    } else f.quiet = rms0 < 2e-4;
     if (!f.quiet) this.quietSince = now;
     f.quietFor = now - this.quietSince;
     if (this.slotT === 0) this.slotT = now;
@@ -191,6 +201,9 @@ export class Features {
     for (let i = lo; i < 24; i++) d += Math.min(14, Math.abs((a[i] - ma) - (b[i] - mb)));
     return Math.max(0, Math.min(1, d / (24 - lo) / 8));
   }
+
+  // A new source: forget the level and the timbre history.
+  resetLevel() { this.lvl = undefined; this.quietT = 0; this.gapT = 0; this.quietSince = 0; this.resetProfile(); }
 
   // Forget the history so a new song starts with a clean reference.
   resetProfile() { this.secN = 0; this.secCount = 0; this.secAcc.fill(0); this.f.shift = 0; this.f.shiftFor = 0; }

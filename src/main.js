@@ -31,7 +31,7 @@ addEventListener('resize', () => renderer.resize());
 const u = {
   T: 0, B: 0, M: 0, H: 0, BEAT: 0, K: 8, Z: 0, C: 0, TR: 0.78,
   KICK: 0, SNARE: 0, HAT: 0, PH: 0, BAR: 0, BT: 0, BPM: 0, EN: 0, DROP: 0, BP: 0,
-  GOO: 0.5, IRID: 0.4, PIT: 0, PK: 1, PA: [0.5, 0.5, 0.5], PB: [0.5, 0.5, 0.5], scene: 0,
+  GOO: 0.5, IRID: 0.4, PIT: 0, PK: 1, ARTC: 0, PA: [0.5, 0.5, 0.5], PB: [0.5, 0.5, 0.5], scene: 0,
 };
 u.C = params.has('colors') ? +params.get('colors') || 0 : Math.random();
 let auto = params.get('auto') !== '0', beatsInScene = 0, sceneStart = 0, trailsSetting = 0.4;
@@ -49,33 +49,46 @@ function toast(title, sub = '', ms = 2200) {
 }
 
 // ---------- Now playing pill (top right) ----------
-// The only place the song shows. "Searching…" while Song ID is listening with
-// nothing known yet; the song for a few seconds when found and every 30 s after.
+// Rendered from Song ID's state every frame, so it never claims more than it knows:
+// Searching (listening / identifying), the song (a few seconds when named and every
+// 30 s after), the song dimmed with "might have changed" while clues pile up,
+// "Unknown song" when a check comes back empty.
 const NP_EVERY = 30, NP_FOR = 4.5;
-let npMode = 'hidden', npNext = 0, npHide = 0;
+let npShownAt = -1e9, npNext = 0, npKey = '';
 if (params.get('np') === '1') body.classList.add('np-on');
 const np = $('np');
-function npSet(mode) {
-  npMode = mode;
-  np.classList.toggle('show', mode !== 'hidden');
-  np.classList.toggle('searching', mode === 'searching');
-}
-function npSearching() {
-  if (song) return;                                  // a known song stays up; checks happen quietly
-  $('npTitle').textContent = 'Searching…'; $('npSub').textContent = 'Song ID';
-  npSet('searching');
-}
-function npPulse(now) {
-  if (!song) return;
-  const line = musicLine();
-  $('npTitle').textContent = song.title;
-  $('npSub').textContent = song.artist + (line ? ' · ' + line : '');
-  npSet('song');
-  npHide = now + NP_FOR; npNext = now + NP_EVERY;
-}
-function npTick(now) {
-  if (npMode === 'song' && now > npHide) npSet('hidden');
-  if (song && npMode !== 'song' && now > npNext) npPulse(now);
+function npRender(now) {
+  const st = songId.state;
+  let show = false, title = '', sub = '', cls = '';
+  if (st === 'listening') {
+    show = true; cls = 'searching'; title = 'Searching…';
+    sub = songId.stage === 0 ? 'listening · ' + Math.ceil(Math.max(0, songId.need - songId.heard)) + ' s' : 'no match yet · listening longer';
+  } else if (st === 'identifying') {
+    show = true;
+    if (song) { title = song.title; sub = 'checking…'; cls = 'suspect'; }
+    else { title = 'Searching…'; sub = 'identifying'; cls = 'searching'; }
+  } else if (st === 'suspect') {
+    show = true; cls = 'suspect'; title = song ? song.title : 'Searching…'; sub = 'might have changed · checking';
+  } else if (st === 'unknown') {
+    cls = 'searching'; title = 'Unknown song';
+    const wait = songId.nextTry - now;
+    sub = wait > 3 ? 'trying again in ' + Math.ceil(wait) + ' s' : 'listening…';
+    show = now - songId.stateSince < NP_FOR || wait <= 3;
+  } else if (st === 'known' && song) {
+    title = song.title; const line = musicLine(); sub = song.artist + (line ? ' · ' + line : '');
+    const key = 'known:' + song.key;
+    if (npKey !== key) { npKey = key; npShownAt = now; npNext = now + NP_EVERY; }          // just named (or confirmed): show now
+    else if (now >= npNext) { npShownAt = now; npNext = now + NP_EVERY; }
+    show = now - npShownAt < NP_FOR;
+  }
+  if (st !== 'known') npKey = st;
+  if (show) {
+    if ($('npTitle').textContent !== title) $('npTitle').textContent = title;
+    if ($('npSub').textContent !== sub) $('npSub').textContent = sub;
+  }
+  np.classList.toggle('show', show);
+  np.classList.toggle('searching', cls === 'searching');
+  np.classList.toggle('suspect', cls === 'suspect');
 }
 
 // ---------- Scenes ----------
@@ -115,7 +128,7 @@ let pendingSwitch = false;
 const F = () => audio.features.f;
 audio.onBeat = now => {
   ecg.beat(now, audio.level.b);
-  if (npHide) { const np = $('np'); np.classList.remove('beat'); void np.offsetWidth; np.classList.add('beat'); }
+  if (np.classList.contains('show') && songId.state === 'known') { np.classList.remove('beat'); void np.offsetWidth; np.classList.add('beat'); }
   if (SCENES[u.scene].monitor) {
     $('heart').classList.remove('beat'); void $('heart').offsetWidth; $('heart').classList.add('beat');
   }
@@ -140,6 +153,7 @@ audio.features.onKey = (name, hueV) => {
   updateNow();
 };
 audio.features.onTempoChange = () => songId.clue('tempo');
+audio.features.onGap = (len, now) => songId.clue('gap', now);
 
 // ---------- Sources ----------
 const SOURCE_TEXT = {
@@ -225,21 +239,13 @@ $('progress').onclick = e => {
 // ---------- Song ID ----------
 let errorToastT = -1e9;
 const songId = new SongID(audio, {
-  onStatus: (kind, info) => {
-    if (kind === 'listening' || kind === 'sending') npSearching();
-    else if (kind === 'nomatch') { if (info >= 3 && !song) npSet('hidden'); }   // all three tries failed: rest until the next round
-    else if (kind === 'short') toast('Not enough audio yet', 'Give it a few seconds');
-    else if (kind === 'error') {
-      if (!song) npSet('hidden');
-      if (last - errorToastT > 300) { errorToastT = last; toast('Song ID unavailable', String(info).slice(0, 80)); }
-    }
-    $('idBtn').classList.toggle('busy', kind === 'sending');
-  },
+  onError: msg => { if (last - errorToastT > 300) { errorToastT = last; toast('Song ID', String(msg).slice(0, 80)); } },
+  onState: s => { $('idBtn').classList.toggle('busy', s === 'identifying'); },
   onMatch: async (m, changed) => {
+    if (!m) { clearSongDisplay(); return; }
     song = m;
-    if (!changed) { if (npMode === 'song') npPulse(last); return; }
-    body.classList.remove('has-art'); $('npArt').style.backgroundImage = '';
-    npPulse(last);
+    if (!changed) return;
+    body.classList.remove('has-art'); $('npArt').style.backgroundImage = ''; renderer.setArt(null);
     if (m.genre) body.dataset.genre = m.genre.toLowerCase();
     try {
       const img = await loadArt(m.art || m.bg);
@@ -253,24 +259,24 @@ const songId = new SongID(audio, {
   },
 });
 songId.enabled = store.get('songid', true);
+if (songId.debug) window.phosphene = { audio, songId, renderer, u };   // ?debug exposes the internals
 function hueOf([r, g, b]) {
   const mx = Math.max(r, g, b), mn = Math.min(r, g, b), d = mx - mn;
   if (d < 1e-4) return 0;
   let h = mx === r ? ((g - b) / d) % 6 : mx === g ? (b - r) / d + 2 : (r - g) / d + 4;
   return ((h / 6) + 1) % 1;
 }
-function clearSong() {
+function clearSongDisplay() {
   song = null; body.classList.remove('has-art'); delete body.dataset.genre;
   $('npArt').style.backgroundImage = ''; renderer.setArt(null);
   palette.to = { ...DEFAULT_PALETTE };
-  npSet('hidden');
 }
-function onSourceChanged() { clearSong(); songId.reset(); cTarget = null; }
+function onSourceChanged() { clearSongDisplay(); songId.reset(); cTarget = null; }
 function setSongId(on) {
   songId.enabled = on; store.set('songid', on);
   $('idSwitch').classList.toggle('on', on); $('idSwitch').setAttribute('aria-checked', on);
   $('idBtn').classList.toggle('off', !on);
-  if (!on) clearSong(); else songId.reset();
+  clearSongDisplay(); songId.reset();
 }
 function identifyNow() {
   if (audio.source === 'demo') { toast('Pick a real source first', 'Song ID needs the mic, a tab or a file'); return; }
@@ -409,8 +415,10 @@ function frame() {
   ecg.update(now, dt, L.m);
   renderer.render(audio, u, ecg);
   songId.update(now);
-  if (song && songId.ended) { song = null; npSet('hidden'); }   // the song finished: the next one starts from Searching
-  npTick(now);
+  npRender(now);
+  // how sure we are the album on screen is the song playing: 1 known, 0.4 while a change is suspected, 0 otherwise
+  const artc = song && songId.state === 'known' ? 1 : song && (songId.state === 'suspect' || songId.state === 'identifying') ? 0.4 : 0;
+  u.ARTC += (artc - u.ARTC) * Math.min(1, dt * 1.5);
   if (SCENES[u.scene].monitor) {
     const bpm = f.locked && f.bpm ? Math.round(f.bpm) : ecg.bpm && now - ecg.beatT < 3 ? ecg.bpm : '--';
     $('bpm').textContent = bpm;

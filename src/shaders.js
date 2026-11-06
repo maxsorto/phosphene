@@ -14,12 +14,12 @@ in vec2 a; void main(){ gl_Position = vec4(a,0.,1.); }`;
 //   BPM tempo  EN energy 0..1  DROP section-drop envelope  BP predicted-beat pulse
 //   K symmetry  Z bass-driven distance  C palette offset  TR trail length
 //   GOO melt amount  IRID iridescence  PIT dominant pitch 0..1  SGH spectrogram head row
-//   PA PB PK cosine palette (album art tints these)
+//   PA PB PK cosine palette (album art tints these)  HASART art texture loaded  ARTC confidence the art is the song playing (0..1)
 //   P previous frame  F spectrum  ECG heartbeat ring  W waveform  SG spectrogram ring  ART album art
 export const COMMON = `#version 300 es
 precision highp float;
 uniform vec2 R; uniform float T,B,M,H,BEAT,K,Z,C,TR;
-uniform float KICK,SNARE,HAT,PH,BAR,BT,BPM,EN,DROP,BP,GOO,IRID,PIT,SGH,HEAD,HASART,PK;
+uniform float KICK,SNARE,HAT,PH,BAR,BT,BPM,EN,DROP,BP,GOO,IRID,PIT,SGH,HEAD,HASART,ARTC,PK;
 uniform vec3 PA,PB;
 uniform sampler2D P, F, ECG, W, SG, ART;
 out vec4 o;

@@ -102,6 +102,9 @@ body.has-art .np-art svg { display: none; }
 .np.beat .np-art { animation: npbeat .3s ease-out; }
 .np.searching .np-art { background: var(--fill-hover); color: var(--label); animation: npsearch 1.8s ease-in-out infinite; }
 .np.searching .np-title { font-weight: 300; letter-spacing: .06em; }
+.np.suspect .np-title { opacity: .55; }
+.np.suspect .np-art { filter: grayscale(1) opacity(.5); }
+.np.suspect .np-sub { color: rgba(255, 200, 120, .8); }
 @keyframes npsearch { 0%, 100% { box-shadow: 0 0 0 0 rgba(255,255,255,.35); } 50% { box-shadow: 0 0 0 8px rgba(255,255,255,0); } }
 @keyframes npbeat { 0% { transform: scale(1.12); } 100% { transform: scale(1); } }
 @media (max-width: 720px) { .np { right: 12px; } }

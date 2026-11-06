@@ -68,7 +68,9 @@ void main(){
   q += .002*vec2(sin(p.y*7.+T*.7), cos(p.x*7.-T*.6))*(1.+goo);
   vec3 prev = texture(P, q*vec2(R.y/R.x,1.)+.5).rgb;
   prev = max(hue(prev, .02 + .1*H + .4*DROP)*min(TR*FB_KEEP + .08*M, .985) - .004, 0.);
-  o = vec4(col*.55 + prev, 1.);
+  vec3 acc = col*.55 + prev;
+  acc /= 1. + acc*.07;                                      // soft ceiling so loud music never whites out
+  o = vec4(acc, 1.);
 }`;
 
 export function sceneSource(s) {
@@ -87,10 +89,13 @@ void main(){
   vec3 c = vec3(texture(P,uv+d).r, texture(P,uv).g, texture(P,uv-d).b);
   vec3 bl = vec3(0); vec2 px = vec2(R.y/R.x,1.)*(.014+.01*DROP);
   for(int i=0;i<8;i++){ float a=float(i)*TAU/8.; bl += texture(P, uv+vec2(cos(a),sin(a))*px).rgb; }
-  bl *= .125; c += bl*bl*(.45+.6*DROP);                                  // bloom from the bright bits
+  bl *= .125; vec3 br = max(bl-.45, 0.); c += br*br/(1.+br)*(.6+.6*DROP);   // bloom from the bright bits only, never runaway
   float l = dot(c,vec3(.299,.587,.114));
   c = hue(c, IRID*.5*sin(l*5.+T*.4));                                    // thin-film iridescence
-  c = 1.-exp(-c*1.1);
+  float avg = 0.;                                                         // auto exposure: 16 taps of the frame
+  for(int i=0;i<4;i++) for(int j=0;j<4;j++) avg += dot(texture(P, (vec2(float(i),float(j))+.5)/4.).rgb, vec3(.299,.587,.114));
+  float ex = clamp(.9/(avg/16.+.3), .3, 2.2);
+  c = 1.-exp(-c*ex);
   l = dot(c,vec3(.299,.587,.114));
   c = max(mix(vec3(l),c,1.45),0.);
   c = c*c*(3.-2.*c);

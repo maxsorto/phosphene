@@ -48,21 +48,34 @@ function toast(title, sub = '', ms = 2200) {
   clearTimeout(toastTimer); toastTimer = setTimeout(() => $('toast').classList.remove('show'), ms);
 }
 
-// ---------- Now playing pill: surfaces for a few seconds every 30 s ----------
+// ---------- Now playing pill (top right) ----------
+// The only place the song shows. "Searching…" while Song ID is listening with
+// nothing known yet; the song for a few seconds when found and every 30 s after.
 const NP_EVERY = 30, NP_FOR = 4.5;
-let npNext = 0, npHide = 0;
+let npMode = 'hidden', npNext = 0, npHide = 0;
 if (params.get('np') === '1') body.classList.add('np-on');
+const np = $('np');
+function npSet(mode) {
+  npMode = mode;
+  np.classList.toggle('show', mode !== 'hidden');
+  np.classList.toggle('searching', mode === 'searching');
+}
+function npSearching() {
+  if (song) return;                                  // a known song stays up; checks happen quietly
+  $('npTitle').textContent = 'Searching…'; $('npSub').textContent = 'Song ID';
+  npSet('searching');
+}
 function npPulse(now) {
-  const f = F(), m = song;
-  $('npTitle').textContent = m ? m.title : audio.source === 'file' ? audio.fileName : SOURCE_TEXT[audio.source][0];
+  if (!song) return;
   const line = musicLine();
-  $('npSub').textContent = m ? m.artist + (line ? ' · ' + line : '') : line || SOURCE_TEXT[audio.source][1];
-  $('np').classList.add('show');
+  $('npTitle').textContent = song.title;
+  $('npSub').textContent = song.artist + (line ? ' · ' + line : '');
+  npSet('song');
   npHide = now + NP_FOR; npNext = now + NP_EVERY;
 }
 function npTick(now) {
-  if (npHide && now > npHide) { $('np').classList.remove('show'); npHide = 0; }
-  if (now > npNext && (song || F().locked)) npPulse(now);
+  if (npMode === 'song' && now > npHide) npSet('hidden');
+  if (song && npMode !== 'song' && now > npNext) npPulse(now);
 }
 
 // ---------- Scenes ----------
@@ -141,16 +154,11 @@ function musicLine() {
   if (f.key >= 0 && f.keyConf > 0.2) bits.push(f.keyName);
   return bits.join(' · ');
 }
-function updateNow(status) {
+function updateNow() {
   const s = audio.source;
   body.classList.remove('src-demo', 'src-tab', 'src-mic', 'src-file');
   body.classList.add('src-' + s);
-  let title, sub;
-  if (song) { title = song.title; sub = song.artist; }
-  else { [title, sub] = s === 'file' ? [audio.fileName, 'Local file'] : SOURCE_TEXT[s]; }
-  const m = s === 'demo' ? '' : musicLine();
-  if (status) sub = status;
-  else if (m) sub = song ? song.artist + ' · ' + m : m;
+  const [title, sub] = s === 'file' ? [audio.fileName, 'Local file'] : SOURCE_TEXT[s];
   $('nowTitle').textContent = title; $('nowSub').textContent = sub;
 }
 async function startSource(kind) {
@@ -215,25 +223,27 @@ $('progress').onclick = e => {
 };
 
 // ---------- Song ID ----------
+let errorToastT = -1e9;
 const songId = new SongID(audio, {
   onStatus: (kind, info) => {
-    if (kind === 'listening') updateNow('Listening…');
-    else if (kind === 'sending') updateNow('Identifying…');
-    else if (kind === 'nomatch') updateNow(info >= 3 ? 'No match yet' : 'Listening…');
+    if (kind === 'listening' || kind === 'sending') npSearching();
+    else if (kind === 'nomatch') { if (info >= 3 && !song) npSet('hidden'); }   // all three tries failed: rest until the next round
     else if (kind === 'short') toast('Not enough audio yet', 'Give it a few seconds');
-    else if (kind === 'error') { updateNow(); toast('Song ID unavailable', String(info).slice(0, 80)); }
-    else if (kind === 'match') updateNow();
+    else if (kind === 'error') {
+      if (!song) npSet('hidden');
+      if (last - errorToastT > 300) { errorToastT = last; toast('Song ID unavailable', String(info).slice(0, 80)); }
+    }
     $('idBtn').classList.toggle('busy', kind === 'sending');
   },
   onMatch: async (m, changed) => {
-    song = m; updateNow();
-    if (!changed) return;
+    song = m;
+    if (!changed) { if (npMode === 'song') npPulse(last); return; }
+    body.classList.remove('has-art'); $('npArt').style.backgroundImage = '';
     npPulse(last);
     if (m.genre) body.dataset.genre = m.genre.toLowerCase();
     try {
       const img = await loadArt(m.art || m.bg);
       if (song !== m) return;
-      $('nowArt').style.backgroundImage = `url("${img.src}")`;
       $('npArt').style.backgroundImage = `url("${img.src}")`;
       body.classList.add('has-art');
       renderer.setArt(img);
@@ -251,15 +261,16 @@ function hueOf([r, g, b]) {
 }
 function clearSong() {
   song = null; body.classList.remove('has-art'); delete body.dataset.genre;
-  $('nowArt').style.backgroundImage = ''; $('npArt').style.backgroundImage = ''; renderer.setArt(null);
+  $('npArt').style.backgroundImage = ''; renderer.setArt(null);
   palette.to = { ...DEFAULT_PALETTE };
+  npSet('hidden');
 }
 function onSourceChanged() { clearSong(); songId.reset(); cTarget = null; }
 function setSongId(on) {
   songId.enabled = on; store.set('songid', on);
   $('idSwitch').classList.toggle('on', on); $('idSwitch').setAttribute('aria-checked', on);
   $('idBtn').classList.toggle('off', !on);
-  if (!on) { clearSong(); updateNow(); } else songId.reset();
+  if (!on) clearSong(); else songId.reset();
 }
 function identifyNow() {
   if (audio.source === 'demo') { toast('Pick a real source first', 'Song ID needs the mic, a tab or a file'); return; }
@@ -371,7 +382,6 @@ addEventListener('keydown', e => {
 
 // ---------- Frame loop ----------
 const bars = [...document.querySelectorAll('.eq i')];
-let lineTimer = 0;
 function frame() {
   const now = performance.now() / 1000, dt = Math.min(0.1, now - last); last = now;
   audio.update(now, dt);
@@ -399,6 +409,7 @@ function frame() {
   ecg.update(now, dt, L.m);
   renderer.render(audio, u, ecg);
   songId.update(now);
+  if (song && songId.ended) { song = null; npSet('hidden'); }   // the song finished: the next one starts from Searching
   npTick(now);
   if (SCENES[u.scene].monitor) {
     const bpm = f.locked && f.bpm ? Math.round(f.bpm) : ecg.bpm && now - ecg.beatT < 3 ? ecg.bpm : '--';
@@ -407,7 +418,6 @@ function frame() {
   if (!dock.classList.contains('hidden')) {
     const v = [L.b, L.m, (L.m + L.h) / 2, L.h];
     bars.forEach((b, i) => { b.style.height = (18 + Math.min(1, v[i]) * 82) + '%'; });
-    if (now - lineTimer > 1 && !songId.busy) { lineTimer = now; updateNow(); }
   }
   requestAnimationFrame(frame);
 }

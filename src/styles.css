@@ -100,6 +100,9 @@ body.has-art .np-art svg { display: none; }
 .np-title { font-weight: 500; font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .np-sub { font: 400 10px/1.6 var(--mono); letter-spacing: .14em; text-transform: uppercase; color: var(--label-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .np.beat .np-art { animation: npbeat .3s ease-out; }
+.np.searching .np-art { background: var(--fill-hover); color: var(--label); animation: npsearch 1.8s ease-in-out infinite; }
+.np.searching .np-title { font-weight: 300; letter-spacing: .06em; }
+@keyframes npsearch { 0%, 100% { box-shadow: 0 0 0 0 rgba(255,255,255,.35); } 50% { box-shadow: 0 0 0 8px rgba(255,255,255,0); } }
 @keyframes npbeat { 0% { transform: scale(1.12); } 100% { transform: scale(1); } }
 @media (max-width: 720px) { .np { right: 12px; } }
 
@@ -128,8 +131,7 @@ body.has-art .np-art svg { display: none; }
   flex: none; width: 44px; height: 44px; border-radius: 10px; display: grid; place-items: center;
   background: var(--ink); background-size: cover; background-position: center;
 }
-body.has-art .now-art .eq { display: none; }
-body.has-art .now-art { box-shadow: 0 0 0 1px var(--stroke); }
+
 .eq { display: flex; align-items: flex-end; gap: 3px; height: 20px; }
 .eq i { display: block; width: 3.5px; border-radius: 2px; background: rgba(0, 0, 0, .78); height: 20%; transition: height .08s; }
 .now-text { display: flex; flex-direction: column; min-width: 0; }

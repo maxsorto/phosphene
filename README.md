@@ -99,16 +99,15 @@ Colour comes from a cosine palette. Seven presets (Rainbow, Acid, Orchid, Ember,
 
 With the microphone or a shared tab, phosphene names what is playing. After four seconds of music it fingerprints the audio and asks; if there is no match it tries again with eight and then twelve seconds, then backs off. When a song is named:
 
-- a now-playing card slides in at the top right with the cover, title, artist, tempo and key, for a few seconds when a song is named or changes, never on a timer (while it is still working out the song it reads "Searching"); the dock only ever shows the source
+- a now-playing card slides in at the top right with the cover, title, artist, tempo and key, for a few seconds when a song is named or changes, never on a timer, and only once the song is certain; the dock only ever shows the source
 - the palette eases toward the cover's two most vivid colours
 - the Vinyl label and the Oracle's iris show the artwork
 
-It does not poll, and it is honest about what it knows. The card has states:
+It does not poll, and it is honest about what it knows. The card only ever shows a song it is sure of:
 
-- **Searching** while it listens and while a fingerprint is on its way
 - **the song**, with cover, artist, tempo and key, when named
-- **Checking** the moment you skip: the old song and its cover are gone at once, and the card shows a quiet "Checking" until the new one is named. A softer doubt (a clue that may be a false alarm) keeps the title, dimmed, with "checking"
-- **Unknown song** when a check comes back empty; it keeps listening and retries with a back-off
+- **nothing** while it listens, while a fingerprint is on its way, while a change is suspected and when a check comes back empty. The moment you skip, the old song and its cover are gone at once, and the card stays away until the new one is named
+- **Searching**, then the song or **Unknown song**, only when you press the identify button yourself
 
 The match says how far into the song the excerpt was, and a free lookup says how long the song is, so phosphene knows roughly when it ends and checks again just after that. Before then only clues trigger a check, each with a weight: a skip gap (the audio drops to the noise floor for a fraction of a second, then music again: the signature of pressing Next, and the strongest clue), a long silence, the beat grid jumping (even a crossfade breaks the grid of a stable beat lock), the tempo tracker switching to a new tempo after a stable stretch, a sustained shift in timbre or in harmonic content (the last five seconds against the fifteen before them), or a new key. A medium clue is enough to doubt, and doubt always resolves: a check runs within a few seconds, and the answer is the same song, a new song, or "Unknown song". After a skip it waits for five seconds of the new song and sends only those. If a check comes back as the same song, it takes two clues to doubt again for a minute and a half. As a backstop, if anything at all looked different and the last check was more than ninety seconds ago, it checks once. Quiet is judged relative to the running music level, not an absolute number, so a faint microphone works the same as a loud tab.
 
@@ -119,6 +118,17 @@ Scenes that show the cover (Vinyl, Oracle) share one confidence value: the art i
 Press `I` to identify right now. The switch in Settings turns it off entirely (remembered).
 
 How it works: the fingerprint is the same compact format the Shazam app sends, generated in a Web Worker from the last few seconds of audio (16 kHz mono, sliding 2048-point spectra, peaks picked against their neighbours in time and frequency, packed into about four kilobytes). A tiny serverless function on Vercel forwards it to the recognition service and returns the title, artist, artwork and genre. The implementation in `src/shazam.js` was written from the public description of the format and checks byte-for-byte against the SongRec reference; it is also about forty times faster than the JavaScript ports it was checked against. The service is free but unofficial, so it may stop working one day without notice.
+
+### Lyrics
+
+Once the song is named, its words can play over the picture, the same in every scene: the line being sung in near-white, the lines before and after it smaller and dimmer, sliding up as the song moves on. It is off on the website until you turn it on (the **Lyrics** switch in Settings, the `L` key, or `?lyrics=1`), and it needs Song ID.
+
+- **Where the words come from.** [LRCLIB](https://lrclib.net), a free and open lyrics database with no key. The song's title, artist and length are sent to a small function (`api/lyrics.js`; the Mac app asks LRCLIB itself), nothing else. No lyrics are stored anywhere.
+- **Keeping time.** The match says where in the song the excerpt began, so the position now is that plus the excerpt's length plus the time since. Time-synced lyrics give each line its second. When only plain lyrics exist the lines are paced evenly across the song, which is a rough guide and no more; when there are none, nothing is shown.
+- **Album cut or radio edit.** The same audio often matches two recordings whose timelines differ by the length of an intro, and the service may report the position on either. When LRCLIB has the lyrics for both lengths, the pairing in which both versions show the same line is the right one, and phosphene settles on it.
+- **Only when it is sure.** Lyrics follow the same rule as the card: a line is on screen only while the song is known. Listening, checking, a suspected change, a skip, silence or an unknown song fade it out.
+
+How it is drawn: plain type over the canvas (`src/lyrics.js`), a bold grotesque (Figtree, falling back to the system font) with a soft shadow and a faint scrim for legibility. Only transforms and opacity animate, and nothing in it takes the pointer.
 
 ## The ears
 
@@ -234,6 +244,7 @@ Where it came from: the display pass reads mips instead of 27 taps a pixel; the 
 - **Palettes your way.** Pin one, let it change with the scenes, or have it change every so often on its own (about every 45 seconds, easing across). A second stepper row in the menu steps through palettes.
 - **Skip from the menu bar.** A small skip button beside the icon goes to the next scene in one click (right-click or Option-click for the previous one), and a stepper row in the menu steps through scenes without closing it. The scene's name fades in at the bottom left of the desktop for a moment. The button can be hidden from the menu.
 - **Every display matches.** One display's engine leads and the others copy its scene, palette, hue, clock and album art, so two screens never drift into different colours. A palette picked in the menu stays until you pick another, even when Song ID finds the album.
+- **Lyrics on the desktop.** With Song ID on, the words of the song play over the picture on every display, clear of the Dock, the song card and the scene label ("Show lyrics" in the menu, on by default). See [Lyrics](#lyrics).
 - **A fresh look each time.** When music starts it opens on a random scene and palette (a menu switch turns this off), and the song card sits bottom right, clear of the Dock.
 - **It stays out of the way.** It pauses when the desktop is covered by a full-screen app, when the displays sleep and when the screen is locked, and drops to 20 frames a second in silence if you ask it to stay on.
 
@@ -248,7 +259,7 @@ Run `./setup-signing.sh` once before building if you plan to rebuild. It creates
 
 To test it without touching the audio permission, `Phosphene Wallpaper.app/Contents/MacOS/PhospheneWallpaper --test-audio song.m4a --test-seconds 10 --status-file status.json` feeds a file through the same path and writes what the app and the engine are doing once a second.
 
-How it works: a borderless, click-through window at desktop level (above the wallpaper, below the icons) on each display holds a transparent `WKWebView`, which loads the engine from the app bundle with `?wallpaper`. WebKit draws WebGL through Metal, so the shaders run on the same GPU path a hand-written Metal port would use. Audio comes from a Core Audio process tap, is mixed to mono in Swift and pushed to the page sixty times a second, where `src/spectrum.js` (a JavaScript FFT that matches the Web Audio analyser) feeds the same ears as the website. Swift decides when music is playing (most of a second of sound to wake, four seconds of silence to sleep, so a notification ping does not count) and tells the engine to melt in or out; the engine's display pass does the dissolve and writes a transparent canvas where the desktop should show. Song ID and album art are relayed through the website's two functions.
+How it works: a borderless, click-through window at desktop level (above the wallpaper, below the icons) on each display holds a transparent `WKWebView`, which loads the engine from the app bundle with `?wallpaper`. WebKit draws WebGL through Metal, so the shaders run on the same GPU path a hand-written Metal port would use. Audio comes from a Core Audio process tap, is mixed to mono in Swift and pushed to the page sixty times a second, where `src/spectrum.js` (a JavaScript FFT that matches the Web Audio analyser) feeds the same ears as the website. Swift decides when music is playing (most of a second of sound to wake, four seconds of silence to sleep, so a notification ping does not count) and tells the engine to melt in or out; the engine's display pass does the dissolve and writes a transparent canvas where the desktop should show. Song ID and album art are relayed through the website's functions; lyrics are looked up by the app itself.
 
 ## Run it locally
 
@@ -291,12 +302,13 @@ v3 (this: the melodic ear and a melody-driven rewrite of every scene, rebuilt Au
 - `src/features.js` the rhythmic ear: onsets, tempo, beat phase, bars, drops, key
 - `src/shazam.js` the recognition fingerprint (also runs in Node)
 - `src/songid.js` and `src/songid-worker.js` the Song ID state machine and off-thread fingerprinting
+- `src/lyrics.js` the lyrics layer: fetching, timing against the song's position, and the type on screen
 - `src/spectrum.js` a JavaScript spectrum analyser, for audio pushed in by the Mac app
 - `src/palette.js` palette presets and album art to palette
 - `src/ecg.js` the heartbeat waveform and its ring buffer
 - `src/main.js` UI, controls, gestures, URL options and the frame loop
 - `src/styles.css` the interface
-- `api/recognize.js` and `api/art.js` the Vercel functions
+- `api/recognize.js`, `api/art.js` and `api/lyrics.js` the Vercel functions
 - `serve.mjs` local server with the API functions, no dependencies
 - `dev.html` development host that keeps a shared tab's audio across reloads
 - `wallpaper/` the Mac desktop wallpaper app: `Sources/App.swift` (menu bar, when to wake and sleep), `Engine.swift` (the desktop window and web view), `AudioTap.swift` (hearing the Mac), `build.sh`, `setup-signing.sh` (a one-time local signing identity)

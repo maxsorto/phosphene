@@ -19,11 +19,14 @@
 <link rel="apple-touch-icon" href="/apple-touch-icon.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@200;300;400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Figtree:wght@700&family=Inter:wght@200;300;400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="/src/styles.css?v=3">
 </head>
 <body>
 <canvas id="gl"></canvas>
+
+<!-- Lyrics layer: the line being sung with its neighbours, over the picture in every scene -->
+<div id="lyrics" class="lyrics" aria-hidden="true"><div class="ly-box"></div></div>
 
 <!-- Welcome / source picker -->
 <section id="welcome" class="sheet-welcome">
@@ -124,6 +127,7 @@
     </div></div>
   <div class="row"><span>Auto-cycle scenes</span><button class="switch on" id="autoSwitch" role="switch" aria-checked="true"><i></i></button></div>
   <div class="row"><span>Song ID <small>names what is playing</small></span><button class="switch on" id="idSwitch" role="switch" aria-checked="true"><i></i></button></div>
+  <div class="row" id="lyricRow"><span>Lyrics <small>the words of the song, behind the picture</small></span><button class="switch" id="lyricSwitch" role="switch" aria-checked="false"><i></i></button></div>
   <div class="row"><span>Key colors <small>palette follows the musical key</small></span><button class="switch on" id="keySwitch" role="switch" aria-checked="true"><i></i></button></div>
   <div class="row links">
     <button class="link" id="changeSource">Change source</button>
@@ -144,6 +148,7 @@
       <dt><kbd>P</kbd></dt><dd>Next palette</dd>
       <dt><kbd>G</kbd></dt><dd>Goo: off, medium, max</dd>
       <dt><kbd>I</kbd></dt><dd>Name this song</dd>
+      <dt><kbd>L</kbd></dt><dd>Lyrics on or off</dd>
       <dt><kbd>[</kbd> <kbd>]</kbd></dt><dd>Less / more symmetry</dd>
       <dt><kbd>↑</kbd> <kbd>↓</kbd></dt><dd>Sensitivity</dd>
       <dt><kbd>F</kbd></dt><dd>Fullscreen</dd>

@@ -4,6 +4,7 @@ import { AudioEngine } from './audio.js';
 import { ECG } from './ecg.js';
 import { SongID } from './songid.js';
 import { paletteFromImage, loadArt, DEFAULT_PALETTE, PALETTES, clonePalette } from './palette.js';
+import { LyricSync, LyricLayer } from './lyrics.js';
 
 const $ = id => document.getElementById(id);
 const body = document.body;
@@ -34,6 +35,11 @@ try {
 const audio = new AudioEngine($('audio'));
 const ecg = new ECG();
 addEventListener('resize', () => renderer.resize());
+// The lyrics layer: the words of the named song over the picture, the same in every scene. Off on the
+// website until asked for (?lyrics=1 or the switch in Settings); the wallpaper's menu decides for the desktop.
+const lyricSync = new LyricSync(), lyricLayer = new LyricLayer($('lyrics'));
+let lyricsOn = wallpaper ? false : params.has('lyrics') ? params.get('lyrics') !== '0' : store.get('lyrics', false);
+let lyricNow = null, lyricKey = '', glOpacity = 1;
 
 // Everything the shaders read, by uniform name.
 const u = {
@@ -74,44 +80,38 @@ function toast(title, sub = '', ms = 2200) {
 }
 
 // ---------- Now playing pill (top right) ----------
-// Rendered from Song ID's state every frame, so it never claims more than it knows:
-// Searching (listening / identifying), the song for a few seconds when it is named or
-// changes (never on a timer), the song dimmed while a doubt is checked, "Checking"
-// after a skip, "Unknown song" when a check comes back empty.
-const NP_FOR = 6;
-let npShownAt = -1e9, npKey = '';
+// Rendered from Song ID's state every frame, and only ever for a song it is sure of: the
+// card slides in for a few seconds when a song is named or changes (never on a timer) and
+// is gone the moment that song is in doubt. While Song ID listens, asks or checks there is
+// no card at all. The one exception is when you press the identify button yourself: then
+// it says it is searching until it has an answer, and says so if there is none.
+const NP_FOR = 6, ASK_FOR = 25;
+let npShownAt = -1e9, npKey = '', askedAt = -1e9;
 if (params.get('np') === '1') body.classList.add('np-on');
 const np = $('np');
 function npRender(now) {
-  const st = songId.state;
-  let show = false, title = '', sub = '', cls = '';
-  if (st === 'listening') {
-    show = true; cls = 'searching'; title = 'Searching';
-    sub = songId.stage === 0 ? 'listening' : 'no match yet, listening longer';
-  } else if (st === 'identifying' || st === 'suspect') {
-    // a skip hid the song: a clean "Checking". A softer doubt is checked silently; the
-    // card only comes back if the answer is a different song.
-    if (song) { show = false; }
-    else { show = true; title = 'Checking'; sub = 'Song ID'; cls = 'searching'; }
-  } else if (st === 'unknown') {
-    cls = 'searching'; title = 'Unknown song';
-    const wait = songId.nextTry - now;
-    sub = wait > 3 ? 'resting, will try again' : 'listening';
-    show = now - songId.stateSince < NP_FOR || wait <= 3;
-  } else if (st === 'known' && song) {
+  const st = songId.state, working = st === 'listening' || st === 'identifying' || st === 'suspect';
+  const asked = now - askedAt < ASK_FOR;
+  let show = false, title = '', sub = '', searching = false;
+  if (st === 'known' && song) {
     title = song.title; const line = musicLine(); sub = song.artist + (line ? ' · ' + line : '');
     if (npKey !== song.key) { npKey = song.key; npShownAt = now; }   // a song we have not shown yet: show it, then rest
     show = now - npShownAt < NP_FOR;
+  } else if (asked && working) {
+    show = searching = true; title = 'Searching'; sub = st === 'listening' ? 'listening' : 'Song ID';
+  } else if (asked && st === 'unknown') {
+    show = now - songId.stateSince < NP_FOR; searching = true; title = 'Unknown song'; sub = 'still listening';
   }
+  // the question is answered once Song ID has settled on something since it was asked
+  if (asked && !working && songId.stateSince > askedAt && !(st === 'unknown' && show)) askedAt = -1e9;
   if (!song) npKey = '';                                             // cleared (skip, silence, unknown): the next song is news again
   if (show) {
     if ($('npTitle').textContent !== title) $('npTitle').textContent = title;
     if ($('npSub').textContent !== sub) $('npSub').textContent = sub;
   }
   np.classList.toggle('show', show);
-  np.classList.toggle('searching', cls === 'searching');
-  np.classList.toggle('suspect', cls === 'suspect');
-  np.classList.toggle('busy', st === 'listening' || st === 'identifying' || st === 'suspect');
+  np.classList.toggle('searching', searching);
+  np.classList.toggle('busy', show && searching && working);
 }
 
 // ---------- Scenes ----------
@@ -290,7 +290,7 @@ const songId = new SongID(audio, {
 });
 songId.enabled = store.get('songid', true);
 if (songId.debug) window.phosphene = {                               // ?debug exposes the internals
-  audio, songId, renderer, u, base, palette, setScene: i => setScene(i, { quiet: true }), scenes: SCENES,
+  audio, songId, renderer, u, base, palette, setScene: i => setScene(i, { quiet: true }), scenes: SCENES, lyricSync, lyricLayer,
   // GPU milliseconds per frame for every scene (or one), at the current resolution
   bench: (only) => { const q = renderer.quality; renderer.setQuality('high'); const out = {};
     SCENES.forEach((s, i) => { if (only === undefined || only === i) out[num(i) + ' ' + s.name] = +renderer.bench(i, audio, u, ecg).toFixed(2); });
@@ -312,11 +312,24 @@ function setSongId(on) {
   songId.enabled = on; store.set('songid', on);
   $('idSwitch').classList.toggle('on', on); $('idSwitch').setAttribute('aria-checked', on);
   $('idBtn').classList.toggle('off', !on);
-  clearSongDisplay(); songId.reset();
+  clearSongDisplay(); songId.reset(); syncLyricSwitch();
+}
+// Lyrics need the song's name, so switching them on switches Song ID on too.
+function setLyrics(on, announce) {
+  lyricsOn = !!on;
+  if (!wallpaper && !params.has('lyrics')) store.set('lyrics', lyricsOn);
+  if (lyricsOn && !wallpaper && !songId.enabled) setSongId(true);
+  syncLyricSwitch();
+  if (announce) toast(lyricsOn ? 'Lyrics on' : 'Lyrics off', lyricsOn && !song ? 'once the song is named' : '');
+}
+function syncLyricSwitch() {
+  $('lyricSwitch').classList.toggle('on', lyricsOn); $('lyricSwitch').setAttribute('aria-checked', lyricsOn);
+  $('lyricRow').classList.toggle('needs-id', !songId.enabled);
 }
 function identifyNow() {
   if (audio.source === 'demo') { toast('Pick a real source first', 'Song ID needs the mic, a tab or a file'); return; }
   if (!songId.enabled) setSongId(true);
+  askedAt = last; npKey = '';                                // you asked: the card may say it is searching, and shows the answer even if it is the same song
   songId.identify(12, last, true);
 }
 
@@ -331,6 +344,7 @@ $('autoSwitch').onclick = () => setAuto(!auto);
 $('colorBtn').onclick = shiftColors;
 $('idBtn').onclick = identifyNow;
 $('idSwitch').onclick = () => setSongId(!songId.enabled);
+$('lyricSwitch').onclick = () => setLyrics(!lyricsOn);
 $('keySwitch').onclick = () => { keyColors = !keyColors; store.set('keycolors', keyColors); $('keySwitch').classList.toggle('on', keyColors); if (!keyColors) cTarget = null; };
 $('symDown').onclick = () => setSymmetry(u.K - 2);
 $('symUp').onclick = () => setSymmetry(u.K + 2);
@@ -342,6 +356,7 @@ $('melody').value = melodySetting;
 $('goo').value = gooSetting;
 $('idSwitch').classList.toggle('on', songId.enabled); $('idBtn').classList.toggle('off', !songId.enabled);
 $('keySwitch').classList.toggle('on', keyColors);
+syncLyricSwitch();
 document.querySelectorAll('#quality button').forEach(b => b.onclick = () => {
   document.querySelectorAll('#quality button').forEach(x => x.classList.toggle('on', x === b));
   renderer.setQuality(b.dataset.q);
@@ -414,6 +429,7 @@ addEventListener('keydown', e => {
   else if (k === 'p') setPreset(presetIx + 1, true);
   else if (k === 'g') { gooSetting = gooSetting > 0.66 ? 0 : gooSetting > 0.33 ? 1 : 0.5; $('goo').value = gooSetting; store.set('goo', gooSetting); toast('Goo ' + ['off', 'medium', 'max'][gooSetting * 2 | 0]); }
   else if (k === 'i') identifyNow();
+  else if (k === 'l') setLyrics(!lyricsOn, true);
   else if (k === 'arrowup' || k === 'arrowdown') {
     e.preventDefault();
     audio.sensitivity = Math.max(0.3, Math.min(3, audio.sensitivity + (k === 'arrowup' ? 0.15 : -0.15)));
@@ -503,6 +519,19 @@ function frame(now) {
   let artc = song && songId.state === 'known' ? 1 : song && (songId.state === 'suspect' || songId.state === 'identifying') ? 0.4 : 0;
   if (follower && lead) artc = lead.artc;
   u.ARTC += (artc - u.ARTC) * Math.min(1, dt * 1.5);
+  // the lyrics, under the same rule as the song card: only for a song Song ID is sure of right now. Listening,
+  // asking, a suspected change, a skip, silence, an unknown song: no line. A follower shows what its leader shows.
+  let ly = null;
+  if (follower) ly = lyricsOn && lead && lead.ly || null;
+  else {
+    const want = lyricsOn && songId.enabled ? song : null;
+    lyricSync.track(want);
+    if (want && songId.state === 'known') ly = lyricSync.at(now);
+  }
+  const lyKey = ly ? [ly.k, ly.cur, ly.prev, ly.next].join('|') : '';
+  if (lyKey !== lyricKey) { lyricKey = lyKey; lyricNow = ly; lookT = 0; }   // tell the other displays at once
+  lyricLayer.show(ly);
+  lyricLayer.frame((wallpaper ? 1 - u.BGA : 1) * glOpacity, f.beatPulse);
   // the tonearm: down while music plays, lifted in silence and while a skip is being checked
   const checking = !song && (songId.state === 'suspect' || songId.state === 'identifying');
   let arm = audio.source !== 'demo' && ((f.quiet && f.quietFor > 1) || checking) ? 0 : 1;
@@ -514,7 +543,7 @@ function frame(now) {
   if (wallpaper && !follower && now - lookT > 0.2) {          // five times a second, tell the host how this screen looks
     lookT = now;
     const t = palette.to;
-    post({ type: 'look', look: { scene: u.scene, K: u.K, C: base.C, T: vt, BT: u.BT, to: { a: [...t.a], b: [...t.b], f: [...t.f], d: [...t.d] }, art: artUrl, artc, arm } });
+    post({ type: 'look', look: { scene: u.scene, K: u.K, C: base.C, T: vt, BT: u.BT, to: { a: [...t.a], b: [...t.b], f: [...t.f], d: [...t.d] }, art: artUrl, artc, arm, ly: lyricNow } });
   }
   u.ARM += (arm - u.ARM) * Math.min(1, dt * 2);
   if (SCENES[u.scene].monitor && now - monT > 0.08) {       // the monitor's readouts, a dozen times a second
@@ -536,8 +565,9 @@ if (wallpaper) {
   const setting = {
     goo: v => { gooSetting = +v; }, melody: v => { melodySetting = +v; }, trails: v => { trailsSetting = +v; },
     sensitivity: v => { audio.sensitivity = +v; }, fps: v => { fpsCap = +v || 60; }, quality: v => renderer.setQuality(String(v)),
-    opacity: v => { $('gl').style.opacity = +v; },             // below 1 the desktop shows through the picture
+    opacity: v => { $('gl').style.opacity = glOpacity = +v; },  // below 1 the desktop shows through the picture
     songid: v => { if (!!v !== songId.enabled) setSongId(!!v); },
+    lyrics: v => setLyrics(!!v),
     card: v => body.classList.toggle('np-on', !!v),
     stayOn: v => { if (v) { veil = veilTo = 0; } },
     paletteEvery: v => { paletteEvery = Math.max(2, +v || 45); },
@@ -617,6 +647,7 @@ if (wallpaper) {
       label: $('wpLabel') ? $('wpLabel').textContent : null,
       follower, pinned, rotating, BT: +u.BT.toFixed(2), K: u.K, hue: +base.C.toFixed(3), clock: +vt.toFixed(2), to: palette.to.a.concat(palette.to.d).map(v => +v.toFixed(3)),
       cur: palette.cur.a.concat(palette.cur.d).map(v => +v.toFixed(3)), art: follower ? followArt : artUrl,
+      lyrics: { on: lyricsOn, showing: !!lyricKey, chars: lyricNow ? lyricNow.cur.length : 0, ...(follower ? {} : lyricSync.info(performance.now() / 1000)) },
     }),
     // the centre pixel as it is composited, alpha included (self-test: 0 alpha means the desktop shows through)
     pixel() {

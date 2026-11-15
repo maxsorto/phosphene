@@ -58,6 +58,9 @@ export function trim(res) {
       genre: t.genres?.primary || null, art: t.images?.coverarthq || t.images?.coverart || null,
       bg: t.images?.background || null, url: t.url || null, key: t.key, isrc: t.isrc || null,
       offset: res.matches[0].offset ?? null, apple,
+      // the same audio often matches several reference recordings (album cut, radio edit), each with
+      // its own timeline: the other candidates for "how far in", for the lyrics to choose between
+      offsets: res.matches.slice(1, 8).filter(x => Number.isFinite(x.offset) && Math.abs(x.timeskew || 0) < 0.002).map(x => x.offset).slice(0, 4),
     },
   };
 }

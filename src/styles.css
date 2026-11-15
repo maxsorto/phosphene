@@ -84,6 +84,37 @@ body.welcome .monitor { display: none; }
 @keyframes heartbeat { 0% { transform: scale(1.45); } 100% { transform: scale(1); } }
 @media (max-width: 720px) { .mon-lead { left: 10px; font-size: 9px; } .mon-val small, .mon-val i { font-size: 8.5px; letter-spacing: .18em; } }
 
+/* ---------- Lyrics ---------- */
+/* Plain type over the picture, inside whatever the menu bar and Dock leave (the host reports the insets).
+   The line being sung is near-white; the lines either side are smaller and dimmer. Legibility comes from a
+   faint scrim and a soft shadow, never an outline. Only transforms and opacity animate. */
+.lyrics {
+  --ly-size: clamp(22px, min(4.5vw, 7.4vh), 76px);
+  position: fixed; left: var(--inset-l, 0px); right: var(--inset-r, 0px); top: var(--inset-t, 0px); bottom: var(--inset-b, 0px);
+  pointer-events: none; overflow: hidden;
+}
+body.welcome .lyrics { display: none; }
+.ly-box { position: absolute; left: 0; right: 0; top: 64%; height: 0; opacity: 0; transform-origin: 50% 0; transition: opacity .6s ease; will-change: transform, opacity; }
+.lyrics.on .ly-box { opacity: 1; transition-duration: .35s; }
+.ly-box::before {
+  content: ''; position: absolute; left: 50%; top: 0; width: min(96%, 1500px); height: calc(var(--ly-size) * 7.5); transform: translate(-50%, -50%);
+  background: radial-gradient(closest-side, rgba(0, 0, 0, .3), rgba(0, 0, 0, .12) 55%, rgba(0, 0, 0, 0));
+}
+.ly-line {
+  position: absolute; left: 50%; top: 0; width: min(76%, 1180px); text-align: center; text-wrap: balance;
+  font: 700 var(--ly-size)/1.2 Figtree, -apple-system, BlinkMacSystemFont, "SF Pro Display", "Helvetica Neue", Helvetica, Arial, sans-serif;
+  letter-spacing: -.02em; color: #fff; opacity: 0; text-shadow: 0 2px 28px rgba(0, 0, 0, .42);
+  transition: transform .36s cubic-bezier(.3, .7, .1, 1), opacity .36s ease; will-change: transform, opacity;
+}
+.ly-line.ly-long { font-size: calc(var(--ly-size) * .8); }
+.ly-line.ly-xlong { font-size: calc(var(--ly-size) * .64); }
+.ly-line[data-at="cur"] { opacity: .97; }
+.ly-line[data-at="prev"] { opacity: .3; }
+.ly-line[data-at="next"] { opacity: .38; }
+/* On the desktop: a little higher and narrower, clear of the song card (bottom right) and the scene label (bottom left). */
+body.wallpaper .ly-box { top: 58%; }
+body.wallpaper .ly-line { width: min(64%, 1100px); }
+
 /* ---------- Now playing pill ---------- */
 .np {
   position: fixed; top: max(22px, env(safe-area-inset-top)); right: 22px; display: flex; align-items: center; gap: 20px;
@@ -202,6 +233,7 @@ h2 { margin: 0; font: 400 10.5px/1 var(--mono); letter-spacing: .3em; text-trans
 .row { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 11px 0; border-top: 1px solid var(--stroke); font-size: 14px; font-weight: 300; letter-spacing: .02em; }
 .row:first-of-type { border-top: 0; }
 .row small { display: block; font-size: 11px; color: var(--label-3); margin-top: 2px; }
+#lyricRow.needs-id > span { opacity: .45; }              /* lyrics wait for Song ID */
 .row.links { justify-content: flex-start; gap: 18px; }
 .link { color: var(--label-2); font: 400 10.5px/1 var(--mono); letter-spacing: .2em; text-transform: uppercase; }
 .link:hover { color: var(--ink); }

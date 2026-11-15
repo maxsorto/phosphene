@@ -144,6 +144,7 @@ export class SongID {
     this.setState('identifying', now);
     try {
       const samples = this.audio.lastSeconds(Math.min(seconds, avail));
+      const heardAt = performance.now() / 1000, took = samples.length / this.audio.tapRate;   // the excerpt ends now
       const sig = await this.fingerprint(samples);
       if (sig.error) throw new Error(sig.error);
       const r = await fetch(this.endpoint, {
@@ -157,6 +158,10 @@ export class SongID {
       const fresh = this.clues.filter(c => c.t > now);               // clues that arrived while we were asking still count
       if (data.match) {
         const m = data.match, changed = !this.match || this.match.key !== m.key;
+        // where the song was when the excerpt ended (the offset is where the excerpt began), and the other
+        // candidates when the audio matched more than one recording: what the lyrics keep time from
+        m.at = heardAt; m.pos = Number.isFinite(m.offset) ? m.offset + took : null;
+        m.alt = (Array.isArray(m.offsets) ? m.offsets : []).filter(Number.isFinite).map(o => o + took);
         if (!changed && reason === 'change') this.falseAlarmT = t;     // same song: the clues lied
         this.match = m; this.failures = 0; this.stage = STAGES.length; this.clues = fresh; this.suspectAt = 0; this.hidden = false;
         if (!fresh.some(c => c.kind === 'gap' || c.kind === 'silence')) this.gapAt = 0;

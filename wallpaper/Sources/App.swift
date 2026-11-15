@@ -51,13 +51,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var enabled: Bool { defaults.bool(forKey: "enabled") }
     private var source: String { defaults.string(forKey: "source") ?? "system" }       // "system", "off" or a bundle id
     private var stayOn: Bool { defaults.bool(forKey: "stayOn") || testWake }
+    private var lyricsWanted: Bool { defaults.bool(forKey: "lyrics") && defaults.bool(forKey: "songId") }   // lyrics need the song's name
 
     // MARK: Launch
 
     func applicationDidFinishLaunching(_ note: Notification) {
         defaults.register(defaults: [
             "enabled": true, "source": "system", "sourceName": "", "auto": true, "scene": 0, "palette": -1,
-            "opacity": 1.0, "goo": 0.5, "melody": 1.0, "fps": 60, "allDisplays": true, "songId": true, "card": false, "stayOn": false, "randomStart": true, "skipButton": true,
+            "opacity": 1.0, "goo": 0.5, "melody": 1.0, "fps": 60, "allDisplays": true, "songId": true, "lyrics": true, "card": false, "stayOn": false, "randomStart": true, "skipButton": true,
         ])
         var args = Array(CommandLine.arguments.dropFirst())
         while !args.isEmpty {
@@ -211,6 +212,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         js += "phospheneHost.set('fps', \(d.integer(forKey: "fps")));"
         js += "phospheneHost.set('follower', \(!primary));"
         js += "phospheneHost.set('songid', \(primary && d.bool(forKey: "songId")));"
+        js += "phospheneHost.set('lyrics', \(lyricsWanted));"            // every display: the others show the line the leader shows
         js += "phospheneHost.set('card', \(d.bool(forKey: "card")));"
         js += "phospheneHost.set('stayOn', \(stayOn));"
         js += Self.insetsCall(view)
@@ -362,6 +364,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         add(menu, "Show the skip button in the menu bar", #selector(toggle(_:)), on: d.bool(forKey: "skipButton"), key: "skipButton")
         add(menu, "Start on a random scene and palette", #selector(toggle(_:)), on: d.bool(forKey: "randomStart"), key: "randomStart")
         add(menu, "Name the song (Song ID)", #selector(toggle(_:)), on: d.bool(forKey: "songId"), key: "songId")
+        add(menu, "Show lyrics", #selector(toggle(_:)), on: lyricsWanted, enabled: d.bool(forKey: "songId"), key: "lyrics")
         add(menu, "Show the song on the desktop", #selector(toggle(_:)), on: d.bool(forKey: "card"), key: "card")
         add(menu, "Open at login", #selector(toggleLogin), on: SMAppService.mainApp.status == .enabled)
         if enabled, source != "off", !everLoud { add(menu, "Never reacts? Check audio permission…", #selector(openPermission)) }
@@ -400,7 +403,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         switch key {
         case "enabled": if on { startAudio() } else { finishSleep(); startAudio() }
         case "auto": leader?.js("phospheneHost.setAuto(\(on))"); if !on { defaults.set(scene, forKey: "scene") }
-        case "songId": leader?.js("phospheneHost.set('songid', \(on))")
+        case "songId": leader?.js("phospheneHost.set('songid', \(on))"); views.forEach { $0.js("phospheneHost.set('lyrics', \(lyricsWanted))") }
+        case "lyrics": views.forEach { $0.js("phospheneHost.set('lyrics', \(lyricsWanted))") }
         case "skipButton": updateSkipItem()
         case "card": views.forEach { $0.js("phospheneHost.set('card', \(on))") }
         default: break

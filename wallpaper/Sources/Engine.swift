@@ -1,7 +1,8 @@
 // One screen's worth of wallpaper: a borderless, click-through window at desktop
 // level (behind the icons) holding a transparent web view that runs the same
 // engine as the website. The engine's files are served from the app bundle
-// under a private URL scheme; its two API calls are relayed to the website.
+// under a private URL scheme; Song ID and album art are relayed to the website,
+// and lyrics are looked up here directly.
 
 import AppKit
 import WebKit
@@ -28,6 +29,7 @@ final class EngineScheme: NSObject, WKURLSchemeHandler {
         if path.hasPrefix("/") { path.removeFirst() }
         if path.isEmpty { path = "index.html" }
 
+        if path == "api/lyrics" { lyrics(task, id: id, query: url.query); return }
         if path.hasPrefix("api/") { relay(task, id: id, path: path, query: url.query); return }
         if let data = backdrops[path] { respond(task, id: id, status: 200, type: "image/jpeg", data: data); return }
 
@@ -67,6 +69,93 @@ final class EngineScheme: NSObject, WKURLSchemeHandler {
                 self?.respond(task, id: id, status: http?.statusCode ?? 502, type: http?.value(forHTTPHeaderField: "Content-Type") ?? "application/json", data: data ?? Data("{\"error\":\"offline\"}".utf8))
             }
         }.resume()
+    }
+
+    /// Lyrics are answered here, not relayed: LRCLIB is asked directly and the reply has the shape api/lyrics.js gives.
+    private func lyrics(_ task: WKURLSchemeTask, id: ObjectIdentifier, query: String?) {
+        var params: [String: String] = [:]                 // the page sends form encoding: + is a space
+        for pair in (query ?? "").split(separator: "&") {
+            let kv = pair.split(separator: "=", maxSplits: 1, omittingEmptySubsequences: false).map { String($0).replacingOccurrences(of: "+", with: " ").removingPercentEncoding ?? "" }
+            if kv.count == 2 { params[kv[0]] = kv[1].trimmingCharacters(in: .whitespacesAndNewlines) }
+        }
+        let finish: (Int, Any) -> Void = { [weak self] status, object in
+            let data = (try? JSONSerialization.data(withJSONObject: object)) ?? Data("{}".utf8)
+            DispatchQueue.main.async { self?.respond(task, id: id, status: status, type: "application/json", data: data) }
+        }
+        let title = params["title"] ?? "", artist = params["artist"] ?? "", duration = (Double(params["duration"] ?? "") ?? 0).rounded()
+        guard !title.isEmpty, title.count <= 200, artist.count <= 200, duration >= 0, duration <= 7200 else { finish(400, ["error": "bad song"]); return }
+        LyricLookup.find(title: title, artist: artist, duration: duration) { found in
+            if let found { finish(200, found) } else { finish(502, ["error": "offline"]) }
+        }
+    }
+}
+
+/// The same lookup as api/lyrics.js, for the Mac app: one search on LRCLIB (free, no key), the version whose length
+/// is nearest the song's, and synced versions of other lengths beside it. Keep the two in step.
+enum LyricLookup {
+    private static let agent = "Phosphene visualizer"
+    private typealias Row = [String: Any]
+
+    static func find(title: String, artist: String, duration: Double, done: @escaping ([String: Any]?) -> Void) {
+        search(title, artist) { rows in
+            guard let rows else { done(nil); return }
+            let first = pick(rows, title: title, duration: duration)
+            let t2 = clean(title), a2 = firstArtist(artist)
+            guard first["lyrics"] is NSNull, !t2.isEmpty, t2 != title || a2 != artist else { done(first); return }
+            search(t2, a2) { again in done(again.map { pick($0, title: title, duration: duration) } ?? first) }   // once more, without "(feat. …)" and the rest
+        }
+    }
+
+    private static func search(_ title: String, _ artist: String, done: @escaping ([Row]?) -> Void) {
+        var comps = URLComponents(string: "https://lrclib.net/api/search")!
+        var safe = CharacterSet.alphanumerics; safe.insert(charactersIn: "-._~")
+        let enc: (String) -> String = { $0.addingPercentEncoding(withAllowedCharacters: safe) ?? "" }
+        comps.percentEncodedQuery = "track_name=\(enc(title))&artist_name=\(enc(artist))"
+        var req = URLRequest(url: comps.url!, timeoutInterval: 8)
+        req.setValue(agent, forHTTPHeaderField: "User-Agent"); req.setValue("application/json", forHTTPHeaderField: "Accept")
+        URLSession.shared.dataTask(with: req) { data, response, _ in
+            guard (response as? HTTPURLResponse)?.statusCode == 200, let data, let rows = try? JSONSerialization.jsonObject(with: data) as? [Row] else { done(nil); return }
+            done(rows)
+        }.resume()
+    }
+
+    private static func swap(_ s: String, _ pattern: String, _ with: String) -> String { s.replacingOccurrences(of: pattern, with: with, options: [.regularExpression, .caseInsensitive]) }
+    /// "Song (feat. X) - Remastered 2011" -> "Song"
+    private static func clean(_ s: String) -> String { swap(swap(s, "\\s*[(\\[][^)\\]]*[)\\]]", ""), "\\s+-\\s+.*$", "").trimmingCharacters(in: .whitespaces) }
+    private static func firstArtist(_ s: String) -> String {
+        (swap(s, ",|&|;|\\s+(?:feat\\.?|ft\\.?|featuring|with|x)\\s+", "\u{1}").split(separator: "\u{1}", omittingEmptySubsequences: false).first.map(String.init) ?? "").trimmingCharacters(in: .whitespaces)
+    }
+    private static func norm(_ s: String) -> String {
+        swap(s.folding(options: [.diacriticInsensitive, .caseInsensitive, .widthInsensitive], locale: nil), "[^\\p{L}\\p{N}]+", " ").trimmingCharacters(in: .whitespaces)
+    }
+    private static func key(_ s: String) -> String { let k = norm(clean(s)); return k.isEmpty ? norm(s) : k }
+
+    private static func pick(_ rows: [Row], title: String, duration: Double) -> [String: Any] {
+        let want = key(title)
+        let same = rows.filter { let t = key($0["trackName"] as? String ?? ""); return !t.isEmpty && (t == want || t.hasPrefix(want) || want.hasPrefix(t)) }
+        func length(_ r: Row) -> Double { (r["duration"] as? NSNumber)?.doubleValue ?? 0 }
+        func far(_ r: Row) -> Double { duration > 0 && length(r) > 0 ? abs(length(r) - duration) : 0 }
+        func text(_ r: Row, _ field: String) -> String? {
+            guard (r["instrumental"] as? Bool) != true, let s = r[field] as? String, !s.isEmpty else { return nil }
+            return s
+        }
+        func byLength(_ field: String) -> [Row] {
+            same.filter { text($0, field) != nil }.enumerated().sorted { far($0.element) != far($1.element) ? far($0.element) < far($1.element) : $0.offset < $1.offset }.map { $0.element }
+        }
+        func seconds(_ r: Row) -> Any { length(r) > 0 ? length(r) : NSNull() }
+        let synced = byLength("syncedLyrics")
+        if let best = synced.first, let words = text(best, "syncedLyrics") {
+            var alts: [[String: Any]] = [], seen: Set<String> = [words]
+            for r in synced {
+                guard alts.count < 4, let s = text(r, "syncedLyrics"), length(r) > 0, length(best) > 0, abs(length(r) - length(best)) > 4, !seen.contains(s) else { continue }
+                seen.insert(s); alts.append(["synced": s, "duration": length(r)])
+            }
+            return ["lyrics": ["synced": words, "plain": NSNull(), "duration": seconds(best)] as [String: Any], "alts": alts]
+        }
+        if let plain = byLength("plainLyrics").first, let words = text(plain, "plainLyrics") {
+            return ["lyrics": ["synced": NSNull(), "plain": words, "duration": seconds(plain)] as [String: Any], "alts": [[String: Any]]()]
+        }
+        return ["lyrics": NSNull(), "alts": [[String: Any]]()]
     }
 }
 

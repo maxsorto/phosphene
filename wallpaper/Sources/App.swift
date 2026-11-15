@@ -21,6 +21,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     private var sceneNames: [String] = [], paletteNames: [String] = []
     private var scene = 0
+    private var skipItem: NSStatusItem?                  // the quick next-scene button beside the icon
+    private weak var stepLabel: NSTextField?             // the scene name in the menu's stepper row
+    private weak var paletteLabel: NSTextField?          // and the palette's
+    private var paletteNow = 0                           // the palette on screen, as the leading engine reports it
+    private var testPaletteEvery = 0.0                   // self-test: shorten the timed palette change to this many seconds
+    private var testPaletteMode: Int?                    // self-test: use this palette mode without touching the saved one
+    /// The palette setting: a pinned palette's index, -1 to change with the scenes, -2 to change every so often.
+    private var paletteMode: Int { testPaletteMode ?? defaults.integer(forKey: "palette") }
+    private var testSkips = 0                            // self-test: press the skip button this many times
+    private var pendingRandom = false                    // music just started: pick a fresh scene and palette once the engine is up
 
     // Asleep: your wallpaper, engine paused. Awake: the visualizer. Falling: melting back.
     private enum Mode: String { case asleep, awake, falling }
@@ -47,7 +57,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     func applicationDidFinishLaunching(_ note: Notification) {
         defaults.register(defaults: [
             "enabled": true, "source": "system", "sourceName": "", "auto": true, "scene": 0, "palette": -1,
-            "opacity": 1.0, "goo": 0.5, "melody": 1.0, "fps": 60, "allDisplays": true, "songId": true, "card": false, "stayOn": false,
+            "opacity": 1.0, "goo": 0.5, "melody": 1.0, "fps": 60, "allDisplays": true, "songId": true, "card": false, "stayOn": false, "randomStart": true, "skipButton": true,
         ])
         var args = Array(CommandLine.arguments.dropFirst())
         while !args.isEmpty {
@@ -57,6 +67,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             else if a == "--grab-after", !args.isEmpty { grabAfter = Double(args.removeFirst()) ?? 8 }
             else if a == "--test-wake" { testWake = true }
             else if a == "--test-ignore-cover" { ignoreCover = true }
+            else if a == "--test-skips", !args.isEmpty { testSkips = Int(args.removeFirst()) ?? 0 }
+            else if a == "--test-palette-mode", !args.isEmpty { testPaletteMode = Int(args.removeFirst()) }
+            else if a == "--test-palette-every", !args.isEmpty { testPaletteEvery = Double(args.removeFirst()) ?? 0 }
             else if a == "--test-audio", !args.isEmpty { testAudio = Self.decode(args.removeFirst(), rate: &testRate); testEnd = testAudio.count }
             else if a == "--test-seconds", !args.isEmpty { testEnd = min(testAudio.count, Int((Double(args.removeFirst()) ?? 10) * testRate)) }
         }
@@ -74,6 +87,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.delegate = self
         menu.autoenablesItems = false
         status.menu = menu
+        updateSkipItem()
 
         buildViews()
         startAudio()
@@ -81,6 +95,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         every(1.0 / 60) { [weak self] in self?.pump() }
         every(3) { [weak self] in self?.followApp() }
         every(1) { [weak self] in self?.checkCover() }
+        if testSkips > 0 { every(2) { [weak self] in guard let self, self.mode == .awake, self.testSkips > 0, !self.sceneNames.isEmpty else { return }; self.testSkips -= 1; self.step(1); self.stepPalette(1) } }
         if statusFile != nil { every(1) { [weak self] in self?.writeStatus() } }
         if grabFile != nil { DispatchQueue.main.asyncAfter(deadline: .now() + grabAfter) { [weak self] in self?.grab() } }
 
@@ -118,6 +133,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     @objc private func screensChanged() { buildViews() }
 
+    /// One display's engine leads: it names the song, changes scenes and sets the colours, and the others copy
+    /// its look. It is the first display whose desktop is in view, so a full-screen app on one never freezes the rest.
+    private var leader: WallpaperView? { views.first { $0.ready && $0.visible } ?? views.first }
+    private weak var lastLeader: WallpaperView?
+    private func updateRoles() {
+        guard let now = leader, now !== lastLeader else { return }
+        lastLeader = now
+        views.filter { $0.ready }.forEach { applySettings($0) }
+    }
+
     /// Is this display's desktop hidden behind one window (a full-screen app, in practice)? Window
     /// occlusion is not reported reliably for desktop-level windows, so look at the window list.
     private func covered(_ view: WallpaperView) -> Bool {
@@ -141,24 +166,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             v.visible = visible
             if mode != .asleep { v.js("phospheneHost.setPaused(\(!visible || screensAsleep))") }
         }
+        updateRoles()
     }
     @objc private func displaysSlept() { screensAsleep = true; views.forEach { $0.js("phospheneHost.setPaused(true)") } }
     @objc private func displaysWoke() { screensAsleep = false; if mode != .asleep { views.forEach { $0.js("phospheneHost.setPaused(\(!$0.visible))") } } }
 
     private func handle(_ view: WallpaperView, _ msg: [String: Any]) {
-        let primary = view === views.first
+        let primary = view === leader
         switch msg["type"] as? String {
         case "ready":
-            if primary {
-                sceneNames = msg["scenes"] as? [String] ?? []; paletteNames = msg["palettes"] as? [String] ?? []
-            }
-            applySettings(view)
+            if sceneNames.isEmpty { sceneNames = msg["scenes"] as? [String] ?? []; paletteNames = msg["palettes"] as? [String] ?? [] }
+            randomStartIfDue()
+            lastLeader = nil; updateRoles()                              // (re)assign who leads, which applies every view's settings
             if mode == .awake || (enabled && stayOn) { mode = .awake; view.show(); view.js("phospheneHost.wake(2)") }
         case "scene":
-            guard primary, let i = msg["index"] as? Int else { return }
+            guard primary, view.ready, let i = msg["index"] as? Int else { return }
             scene = i
+            stepLabel?.stringValue = sceneTitle(i)
             if !defaults.bool(forKey: "auto") { defaults.set(i, forKey: "scene") }
-            views.dropFirst().forEach { $0.js("phospheneHost.setScene(\(i))") }      // other displays follow the first
+        case "palette":
+            guard primary, view.ready, let i = msg["index"] as? Int else { return }
+            paletteNow = i
+            paletteLabel?.stringValue = paletteTitle(i)
+        case "look":                                                        // other displays copy the leader's look
+            guard primary, let look = msg["look"], JSONSerialization.isValidJSONObject(look),
+                  let data = try? JSONSerialization.data(withJSONObject: look), let json = String(data: data, encoding: .utf8) else { return }
+            for v in views where v !== view { v.js("phospheneHost.follow(\(json))") }
         case "asleep":
             if mode == .falling { finishSleep() }
         case "error":
@@ -169,17 +202,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
     }
 
+    private static func insetsCall(_ view: WallpaperView) -> String { "phospheneHost.insets(\(view.insets.map(String.init).joined(separator: ",")));" }
+
     private func applySettings(_ view: WallpaperView) {
-        let primary = view === views.first, d = defaults
+        let primary = view === leader, d = defaults
         var js = ""
         for key in ["opacity", "goo", "melody"] { js += "phospheneHost.set('\(key)', \(d.double(forKey: key)));" }
         js += "phospheneHost.set('fps', \(d.integer(forKey: "fps")));"
+        js += "phospheneHost.set('follower', \(!primary));"
         js += "phospheneHost.set('songid', \(primary && d.bool(forKey: "songId")));"
         js += "phospheneHost.set('card', \(d.bool(forKey: "card")));"
         js += "phospheneHost.set('stayOn', \(stayOn));"
+        js += Self.insetsCall(view)
         js += "phospheneHost.setAuto(\(primary && d.bool(forKey: "auto")));"
         if !d.bool(forKey: "auto") { js += "phospheneHost.setScene(\(d.integer(forKey: "scene")));" } else if !primary { js += "phospheneHost.setScene(\(scene));" }
-        if d.integer(forKey: "palette") >= 0 { js += "phospheneHost.setPalette(\(d.integer(forKey: "palette")));" }
+        if testPaletteEvery > 0 { js += "phospheneHost.set('paletteEvery', \(testPaletteEvery));" }
+        js += "phospheneHost.setPalette(\(paletteMode));"
         view.js(js)
     }
 
@@ -218,7 +256,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         guard enabled else { return }
 
         switch mode {
-        case .asleep: if loudRun >= 0.8 || stayOn { wake() }          // most of a second of sound, so a notification ping does not count
+        case .asleep: if loudRun >= 0.8 || stayOn { pendingRandom = true; wake() }          // most of a second of sound, so a notification ping does not count
         case .awake: if !stayOn && now - lastLoud > 4 { fall() }
         case .falling:
             if loudRun >= 0.3 { wake() } else if now - fallingSince > 6 { finishSleep() }
@@ -231,13 +269,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         for v in views where v.ready && v.visible && !screensAsleep { v.js(call) }
     }
 
+    /// Each time music starts, begin on a different scene and palette (unless that is switched off in the menu).
+    private func randomStartIfDue() {
+        guard pendingRandom, !sceneNames.isEmpty, !paletteNames.isEmpty else { return }
+        pendingRandom = false
+        guard defaults.bool(forKey: "randomStart") else { return }
+        var s = Int.random(in: 0..<sceneNames.count), p = Int.random(in: 0..<paletteNames.count)
+        if sceneNames.count > 1 { while s == scene { s = Int.random(in: 0..<sceneNames.count) } }
+        if paletteNames.count > 1 { while p == paletteMode { p = Int.random(in: 0..<paletteNames.count) } }
+        scene = s; defaults.set(s, forKey: "scene")
+        leader?.js("phospheneHost.setScene(\(s))")
+        if paletteMode < 0 { leader?.js("phospheneHost.showPreset(\(p))") }       // palettes rotate: just start somewhere new
+        else { defaults.set(p, forKey: "palette"); views.forEach { $0.js("phospheneHost.setPalette(\(p))") } }
+    }
+
     private func wake() {
         mode = .awake
+        randomStartIfDue()
         for v in views {
             v.visible = !covered(v)
-            v.show(); v.js("phospheneHost.wake(3.5)")
+            v.show(); v.js(Self.insetsCall(v) + "phospheneHost.wake(3.5)")           // the Dock may have moved since last time
             if !v.visible { v.js("phospheneHost.setPaused(true)") }     // behind a full-screen app: wait until the desktop shows
         }
+        updateRoles()
     }
     private func fall() {
         mode = .falling; fallingSince = CACurrentMediaTime()
@@ -276,16 +330,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         listen.addItem(.separator())
         add(listen, "Nothing", #selector(pickSource(_:)), on: source == "off", represented: ["off", ""])
 
+        let (sceneRow, sceneLabel) = stepper(sceneTitle(scene), previous: #selector(previousScene), next: #selector(nextScene), what: "scene")
+        let (paletteRow, palLabel) = stepper(paletteTitle(paletteNow), previous: #selector(previousPalette), next: #selector(nextPalette), what: "palette")
+        stepLabel = sceneLabel; paletteLabel = palLabel
+        menu.addItem(sceneRow); menu.addItem(paletteRow)
         let scenes = submenu(menu, "Scene")
         add(scenes, "Change with the music", #selector(toggle(_:)), on: d.bool(forKey: "auto"), key: "auto")
-        add(scenes, "Next scene", #selector(nextScene))
         scenes.addItem(.separator())
         for (i, name) in sceneNames.enumerated() { add(scenes, String(format: "%02d  %@", i + 1, name), #selector(pickScene(_:)), on: i == scene, represented: i) }
 
         let palettes = submenu(menu, "Palette")
-        add(palettes, "Rotate with the scenes", #selector(pickPalette(_:)), on: d.integer(forKey: "palette") < 0, represented: -1)
+        add(palettes, "Change with the scenes", #selector(pickPalette(_:)), on: paletteMode == -1, represented: -1)
+        add(palettes, "Change every so often", #selector(pickPalette(_:)), on: paletteMode == -2, represented: -2)
         palettes.addItem(.separator())
-        for (i, name) in paletteNames.enumerated() { add(palettes, name, #selector(pickPalette(_:)), on: d.integer(forKey: "palette") == i, represented: i) }
+        for (i, name) in paletteNames.enumerated() { add(palettes, name, #selector(pickPalette(_:)), on: paletteMode == i, represented: i) }
 
         menu.addItem(.separator())
         menu.addItem(slider("Opacity", key: "opacity", min: 0.25, max: 1))
@@ -301,6 +359,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let displays = submenu(menu, "Displays")
         add(displays, "All displays", #selector(pickDisplays(_:)), on: d.bool(forKey: "allDisplays"), represented: true)
         add(displays, "Main display only", #selector(pickDisplays(_:)), on: !d.bool(forKey: "allDisplays"), represented: false)
+        add(menu, "Show the skip button in the menu bar", #selector(toggle(_:)), on: d.bool(forKey: "skipButton"), key: "skipButton")
+        add(menu, "Start on a random scene and palette", #selector(toggle(_:)), on: d.bool(forKey: "randomStart"), key: "randomStart")
         add(menu, "Name the song (Song ID)", #selector(toggle(_:)), on: d.bool(forKey: "songId"), key: "songId")
         add(menu, "Show the song on the desktop", #selector(toggle(_:)), on: d.bool(forKey: "card"), key: "card")
         add(menu, "Open at login", #selector(toggleLogin), on: SMAppService.mainApp.status == .enabled)
@@ -339,8 +399,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let on = !defaults.bool(forKey: key); defaults.set(on, forKey: key)
         switch key {
         case "enabled": if on { startAudio() } else { finishSleep(); startAudio() }
-        case "auto": views.first?.js("phospheneHost.setAuto(\(on))"); if !on { defaults.set(scene, forKey: "scene") }
-        case "songId": views.first?.js("phospheneHost.set('songid', \(on))")
+        case "auto": leader?.js("phospheneHost.setAuto(\(on))"); if !on { defaults.set(scene, forKey: "scene") }
+        case "songId": leader?.js("phospheneHost.set('songid', \(on))")
+        case "skipButton": updateSkipItem()
         case "card": views.forEach { $0.js("phospheneHost.set('card', \(on))") }
         default: break
         }
@@ -354,14 +415,88 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc private func pickScene(_ item: NSMenuItem) {
         guard let i = item.representedObject as? Int else { return }
         defaults.set(false, forKey: "auto"); defaults.set(i, forKey: "scene"); scene = i
-        views.first?.js("phospheneHost.setAuto(false)")
+        leader?.js("phospheneHost.setAuto(false)")
         views.forEach { $0.js("phospheneHost.setScene(\(i))") }
+        announceScene()
     }
-    @objc private func nextScene() { views.first?.js("phospheneHost.next()") }
+    @objc private func nextScene() { step(1) }
+    @objc private func previousScene() { step(-1) }
+    /// The menu bar skip button: a click goes to the next scene, a right-click or Option-click to the previous one.
+    @objc private func skipClicked() {
+        let e = NSApp.currentEvent
+        step(e?.type == .rightMouseUp || e?.modifierFlags.contains(.option) == true ? -1 : 1)
+    }
+    private func sceneTitle(_ i: Int) -> String { sceneNames.indices.contains(i) ? String(format: "%02d  %@", i + 1, sceneNames[i]) : "Scene" }
+    private func step(_ dir: Int) {
+        guard !sceneNames.isEmpty else { return }
+        let n = sceneNames.count
+        scene = ((scene + dir) % n + n) % n
+        if !defaults.bool(forKey: "auto") { defaults.set(scene, forKey: "scene") }
+        leader?.js("phospheneHost.go(\(scene))")
+        announceScene()
+    }
+    /// Name the scene where it can be seen: in the open menu, and for a moment at the bottom left of every desktop.
+    private func announceScene() {
+        let title = sceneTitle(scene)
+        stepLabel?.stringValue = title
+        skipItem?.button?.toolTip = "Next scene (now \(title)). Right-click for the previous one."
+        announce(title)
+    }
+    private func announce(_ text: String) {
+        let quoted = text.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "'", with: "\\'")
+        views.forEach { $0.js("phospheneHost.label('\(quoted)')") }
+    }
+    private func updateSkipItem() {
+        if !defaults.bool(forKey: "skipButton") {
+            if let item = skipItem { NSStatusBar.system.removeStatusItem(item); skipItem = nil }
+            return
+        }
+        guard skipItem == nil else { return }
+        let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
+        let image = NSImage(systemSymbolName: "forward.fill", accessibilityDescription: "Next scene")?
+            .withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: 11, weight: .regular))
+        image?.isTemplate = true
+        item.button?.image = image
+        item.button?.toolTip = "Next scene. Right-click for the previous one."
+        item.button?.target = self; item.button?.action = #selector(skipClicked)
+        item.button?.sendAction(on: [.leftMouseUp, .rightMouseUp])
+        skipItem = item
+    }
+    /// A row in the menu that steps through scenes or palettes without closing it.
+    private func stepper(_ title: String, previous: Selector, next: Selector, what: String) -> (NSMenuItem, NSTextField) {
+        let item = NSMenuItem(), view = NSView(frame: NSRect(x: 0, y: 0, width: 250, height: 30))
+        func arrow(_ symbol: String, _ x: CGFloat, _ action: Selector, _ tip: String) -> NSButton {
+            let b = NSButton(frame: NSRect(x: x, y: 3, width: 28, height: 24))
+            b.image = NSImage(systemSymbolName: symbol, accessibilityDescription: tip); b.imagePosition = .imageOnly
+            b.isBordered = false; b.target = self; b.action = action; b.toolTip = tip
+            return b
+        }
+        let label = NSTextField(labelWithString: title)
+        label.frame = NSRect(x: 44, y: 6, width: 162, height: 18); label.alignment = .center; label.font = .menuFont(ofSize: 0); label.lineBreakMode = .byTruncatingTail
+        view.addSubview(arrow("chevron.left", 12, previous, "Previous \(what)"))
+        view.addSubview(label)
+        view.addSubview(arrow("chevron.right", 210, next, "Next \(what)"))
+        item.view = view
+        return (item, label)
+    }
+    private func paletteTitle(_ i: Int) -> String { paletteNames.indices.contains(i) ? "\(paletteNames[i]) palette" : "Palette" }
+    @objc private func nextPalette() { stepPalette(1) }
+    @objc private func previousPalette() { stepPalette(-1) }
+    /// A pinned palette moves the pin; in the two changing modes this only shows another palette now.
+    private func stepPalette(_ dir: Int) {
+        guard !paletteNames.isEmpty else { return }
+        let n = paletteNames.count
+        paletteNow = ((paletteNow + dir) % n + n) % n
+        if paletteMode >= 0 {
+            defaults.set(paletteNow, forKey: "palette"); views.forEach { $0.js("phospheneHost.setPalette(\(paletteNow))") }
+        } else { leader?.js("phospheneHost.showPreset(\(paletteNow))") }
+        announce(paletteTitle(paletteNow)); paletteLabel?.stringValue = paletteTitle(paletteNow)
+    }
     @objc private func pickPalette(_ item: NSMenuItem) {
         guard let i = item.representedObject as? Int else { return }
         defaults.set(i, forKey: "palette")
-        if i >= 0 { views.forEach { $0.js("phospheneHost.setPalette(\(i))") } }
+        views.forEach { $0.js("phospheneHost.setPalette(\(i))") }
+        if i >= 0 { paletteNow = i; announce(paletteTitle(i)) }
     }
     @objc private func pickStay(_ item: NSMenuItem) {
         guard let on = item.representedObject as? Bool else { return }
@@ -415,7 +550,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             let out: [String: Any] = ["native": native, "engine": (engine as? String).flatMap { try? JSONSerialization.jsonObject(with: Data($0.utf8)) } ?? NSNull()]
             if let data = try? JSONSerialization.data(withJSONObject: out, options: [.prettyPrinted, .sortedKeys]) { try? data.write(to: URL(fileURLWithPath: path)) }
         }
-        if let v = views.first, v.ready { v.js("JSON.stringify({ ...phospheneHost.state(), pixel: phospheneHost.pixel() })", done: write) } else { write(nil) }
+        // every display's engine, the leader first in the "engine" slot
+        var states: [String] = [], queue = views.filter { $0.ready }
+        func next() {
+            guard !queue.isEmpty else {
+                let all = states.compactMap { try? JSONSerialization.jsonObject(with: Data($0.utf8)) }
+                var out: [String: Any] = ["native": native, "engine": all.first ?? NSNull(), "engines": all]
+                out["leader"] = self.leader.map { $0.screen.localizedName } ?? NSNull()
+                if let data = try? JSONSerialization.data(withJSONObject: out, options: [.prettyPrinted, .sortedKeys]) { try? data.write(to: URL(fileURLWithPath: path)) }
+                return
+            }
+            let v = queue.removeFirst()
+            v.js("JSON.stringify({ screen: \"\(v.screen.localizedName)\", ...phospheneHost.state(), pixel: phospheneHost.pixel() })") { value in
+                if let s = value as? String { states.append(s) }
+                next()
+            }
+        }
+        if queue.isEmpty { write(nil) } else { next() }
     }
 
     private func grab() {

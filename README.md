@@ -2,13 +2,15 @@
 
 # phosphene
 
-A psychedelic audio visualizer that runs in your browser. Twenty-three GPU shader worlds (fractals, a wormhole, liquid light, dripping goop, an all-seeing eye, oil-slick rainbows, a terrain built from your song, a bedside monitor, a spinning record and more) that melt and pulse with whatever you are listening to: Spotify in a browser tab, YouTube, your microphone or a local file.
+A psychedelic audio visualizer that runs in your browser, and as the living wallpaper of your Mac. Twenty-three GPU shader worlds (fractals, a wormhole, liquid light, dripping goop, an all-seeing eye, oil-slick rainbows, a terrain built from your song, a bedside monitor, a spinning record and more) that melt and pulse with whatever you are listening to: Spotify in a browser tab, YouTube, your microphone or a local file.
 
 It listens like a musician. It finds the tempo and locks onto the beat, counts bars so scene changes land on the downbeat, tells kicks from snares from hats, notices drops, and works out the key. And it follows the **melody**: every scene gets a semitone-resolution spectrum, the twelve notes of the scale and the pitch of the tune itself, so the shapes move with the notes and not only with the drums. It can also name the song that is playing, Shazam-style, and pull the album's colours into the picture.
 
 <p align="center"><b>Open it: <a href="https://phosphene-viz.vercel.app">phosphene-viz.vercel.app</a></b><br>Desktop Chrome, Edge or Arc for tab audio. Phones work with the mic.</p>
 
-No install, no account, no build step. The visuals and all the analysis run on your device. Song ID sends only a sound fingerprint (a few hundred spectral peaks, never audio), and you can turn it off.
+> **Phosphene on your Mac desktop.** The best way to live with it: a small menu bar app that turns your desktop into the visualizer. Your own wallpaper stays put until music plays, then the scene burns through it on every display and melts back when the music stops. It hears Spotify, Music or anything else the Mac plays directly, with no microphone and no tab sharing. Skip scenes with one click in the menu bar, step through palettes, or let both change by themselves. See [The desktop wallpaper (Mac)](#the-desktop-wallpaper-mac).
+
+The website: no install, no account, no build step. The visuals and all the analysis run on your device. Song ID sends only a sound fingerprint (a few hundred spectral peaks, never audio), and you can turn it off.
 
 <table>
   <tr>
@@ -228,6 +230,10 @@ Where it came from: the display pass reads mips instead of 27 taps a pixel; the 
 - **Your wallpaper stays your wallpaper.** While nothing plays, the app is invisible and asleep, and costs nothing. When music starts, the visualizer burns through your desktop (the window is genuinely transparent, so it works over any wallpaper, even a video one) and melts back a few seconds after the music stops. Desktop icons stay on top.
 - **It hears the Mac directly.** No microphone, no tab sharing: it taps what the Mac is playing, either everything or one app (Spotify, Music, a browser), chosen from the menu bar. This is the "capture the desktop apps directly" item that used to be on the roadmap.
 - **Menu bar controls.** What to listen to, scene (or change with the music), palette, opacity, goo and melody, what to do when the music stops (show my wallpaper, or keep drifting slowly), frame rate, which displays, Song ID, open at login.
+- **Palettes your way.** Pin one, let it change with the scenes, or have it change every so often on its own (about every 45 seconds, easing across). A second stepper row in the menu steps through palettes.
+- **Skip from the menu bar.** A small skip button beside the icon goes to the next scene in one click (right-click or Option-click for the previous one), and a stepper row in the menu steps through scenes without closing it. The scene's name fades in at the bottom left of the desktop for a moment. The button can be hidden from the menu.
+- **Every display matches.** One display's engine leads and the others copy its scene, palette, hue, clock and album art, so two screens never drift into different colours. A palette picked in the menu stays until you pick another, even when Song ID finds the album.
+- **A fresh look each time.** When music starts it opens on a random scene and palette (a menu switch turns this off), and the song card sits bottom right, clear of the Dock.
 - **It stays out of the way.** It pauses when the desktop is covered by a full-screen app, when the displays sleep and when the screen is locked, and drops to 20 frames a second in silence if you ask it to stay on.
 
 ```sh
@@ -235,7 +241,9 @@ cd wallpaper
 ./build.sh --run
 ```
 
-That needs Xcode's command line tools and macOS 14.2 or later. The first time it listens, macOS asks to let it record system audio: that is the permission for hearing what the Mac plays. Nothing is recorded; the samples are analysed in memory, and with Song ID on, only the usual fingerprint leaves the Mac. The app is signed ad hoc, so macOS asks again after each rebuild. To keep it, drag `wallpaper/build/Phosphene Wallpaper.app` to Applications and turn on "Open at login" in its menu.
+That needs Xcode's command line tools and macOS 14.2 or later. The first time it listens, macOS asks to let it record system audio: that is the permission for hearing what the Mac plays. Nothing is recorded; the samples are analysed in memory, and with Song ID on, only the usual fingerprint leaves the Mac. To keep it, drag `wallpaper/build/Phosphene Wallpaper.app` to Applications and turn on "Open at login" in its menu.
+
+Run `./setup-signing.sh` once before building if you plan to rebuild. It creates a self-signed signing identity in its own keychain, used only for this app. Without it the app is ad-hoc signed, every rebuild looks like a new app to macOS, and the audio permission is asked for again each time.
 
 To test it without touching the audio permission, `Phosphene Wallpaper.app/Contents/MacOS/PhospheneWallpaper --test-audio song.m4a --test-seconds 10 --status-file status.json` feeds a file through the same path and writes what the app and the engine are doing once a second.
 
@@ -290,7 +298,7 @@ v3 (this: the melodic ear and a melody-driven rewrite of every scene, rebuilt Au
 - `api/recognize.js` and `api/art.js` the Vercel functions
 - `serve.mjs` local server with the API functions, no dependencies
 - `dev.html` development host that keeps a shared tab's audio across reloads
-- `wallpaper/` the Mac desktop wallpaper app: `Sources/App.swift` (menu bar, when to wake and sleep), `Engine.swift` (the desktop window and web view), `AudioTap.swift` (hearing the Mac), `build.sh`
+- `wallpaper/` the Mac desktop wallpaper app: `Sources/App.swift` (menu bar, when to wake and sleep), `Engine.swift` (the desktop window and web view), `AudioTap.swift` (hearing the Mac), `build.sh`, `setup-signing.sh` (a one-time local signing identity)
 - `docs/` README images, the diagram and the cover art source (`docs/cover/cover.html`)
 
 ## License

@@ -53,9 +53,14 @@ let last = performance.now() / 1000;
 // The palette eases toward `to`: a preset, or the album's colours once the song is named.
 let presetIx = Math.max(0, PALETTES.findIndex(p => p.name.toLowerCase() === (params.get('palette') || '').toLowerCase()));
 const palette = { cur: clonePalette(PALETTES[presetIx]), to: PALETTES[presetIx], album: null };
+let pinned = false;                                         // the wallpaper's menu chose this palette: neither an album nor a scene change replaces it
+// With several displays one engine leads and the others follow its look, so every screen shows the same colours.
+let follower = false, lead = null, artUrl = null, followArt = null, lookT = 0;
+let rotating = false, paletteT = 0, paletteEvery = 45;                         // the wallpaper's "change every so often": a new palette about every 45 seconds
 function setPreset(i, announce) {
   presetIx = (i + PALETTES.length) % PALETTES.length;
-  if (!palette.album) palette.to = PALETTES[presetIx];
+  if (!palette.album || pinned) palette.to = PALETTES[presetIx];
+  if (wallpaper && !follower) post({ type: 'palette', index: presetIx });
   if (announce) toast('Palette ' + PALETTES[presetIx].name, palette.album ? 'after this album' : '');
 }
 
@@ -127,11 +132,12 @@ function setScene(i, { quiet = false } = {}) {
   if (!quiet) toast(num(u.scene) + '   ' + SCENES[u.scene].name, SCENES[u.scene].blurb);
   if (wallpaper) post({ type: 'scene', index: u.scene });
 }
-function nextLook() {
-  setScene(u.scene + 1);
+function nextLook() { lookAt(u.scene + 1); }
+function lookAt(i) {                                        // a scene with a fresh symmetry, hue and (unless one is pinned) palette
+  setScene(i);
   setSymmetry([4, 6, 8, 10, 12][Math.random() * 5 | 0]);
   base.C = cTarget !== null ? cTarget + (Math.random() - 0.5) * 0.2 : Math.random();
-  if (!params.has('palette')) setPreset(Math.random() < 0.4 ? 0 : 1 + (Math.random() * (PALETTES.length - 1) | 0));   // rainbow often, the others in turn
+  if (!params.has('palette') && !pinned) setPreset(Math.random() < 0.4 ? 0 : 1 + (Math.random() * (PALETTES.length - 1) | 0));   // rainbow often, the others in turn
 }
 function setAuto(on) {
   auto = on;
@@ -152,7 +158,7 @@ audio.onBeat = now => {
     $('heart').classList.remove('beat'); void $('heart').offsetWidth; $('heart').classList.add('beat');
   }
   beatsInScene++;
-  if (Math.random() < 0.1) { base.C += 0.15 + Math.random() * 0.3; if (cTarget !== null) cTarget = base.C; }
+  if (!follower && Math.random() < 0.1) { base.C += 0.15 + Math.random() * 0.3; if (cTarget !== null) cTarget = base.C; }
   if (auto && (beatsInScene >= 48 || now - sceneStart > 45)) {
     if (F().locked) pendingSwitch = true; else nextLook();
   }
@@ -163,11 +169,11 @@ audio.features.onBeat = (n, downbeat, now) => {
 };
 audio.features.onDrop = now => {
   if (auto && now - sceneStart > 12) nextLook();
-  base.C += 0.33; if (cTarget !== null) cTarget = base.C;
+  if (!follower) { base.C += 0.33; if (cTarget !== null) cTarget = base.C; }
 };
 audio.features.onKey = (name, hueV) => {
   songId.clue('key');
-  if (!keyColors) return;
+  if (!keyColors || follower) return;
   cTarget = Math.floor(base.C) + hueV;
   updateNow();
 };
@@ -276,7 +282,8 @@ const songId = new SongID(audio, {
       body.classList.add('has-art');
       renderer.setArt(img);
       const p = paletteFromImage(img);
-      if (p) { palette.album = p; palette.to = p; cTarget = Math.floor(base.C) + hueOf(p.c1); }
+      artUrl = m.art || m.bg;
+      if (p) { palette.album = p; if (!pinned) palette.to = p; cTarget = Math.floor(base.C) + hueOf(p.c1); }
     } catch {}
   },
 });
@@ -296,7 +303,7 @@ function hueOf([r, g, b]) {
 }
 function clearSongDisplay() {
   song = null; body.classList.remove('has-art'); delete body.dataset.genre;
-  $('npArt').style.backgroundImage = ''; renderer.setArt(null);
+  $('npArt').style.backgroundImage = ''; renderer.setArt(null); artUrl = null;
   palette.album = null; palette.to = PALETTES[presetIx];
 }
 function onSourceChanged() { clearSongDisplay(); songId.reset(); cTarget = null; }
@@ -453,6 +460,12 @@ function frame(now) {
     u.BGA = veil * veil * (3 - 2 * veil);
   }
   vt += dt * rate;
+  if (follower && lead) {                                     // stay on the leader's clock and hue
+    const want = lead.T + (now - lead.at) * rate, d = want - vt;
+    vt = Math.abs(d) > 1 ? want : vt + d * Math.min(1, dt * 2);
+    const dc = lead.C - base.C;
+    base.C = Math.abs(dc) > 2 ? lead.C : base.C + dc * Math.min(1, dt * 6);
+  }
   // palette eases toward the album's colours, hue toward the key
   const k = Math.min(1, dt * 1.5);
   for (const part of 'abfd') for (let i = 0; i < 3; i++) palette.cur[part][i] += (palette.to[part][i] - palette.cur[part][i]) * k;
@@ -481,11 +494,22 @@ function frame(now) {
   songId.update(now);
   npRender(now);
   // how sure we are the album on screen is the song playing: 1 known, 0.4 while a change is suspected, 0 otherwise
-  const artc = song && songId.state === 'known' ? 1 : song && (songId.state === 'suspect' || songId.state === 'identifying') ? 0.4 : 0;
+  let artc = song && songId.state === 'known' ? 1 : song && (songId.state === 'suspect' || songId.state === 'identifying') ? 0.4 : 0;
+  if (follower && lead) artc = lead.artc;
   u.ARTC += (artc - u.ARTC) * Math.min(1, dt * 1.5);
   // the tonearm: down while music plays, lifted in silence and while a skip is being checked
   const checking = !song && (songId.state === 'suspect' || songId.state === 'identifying');
-  const arm = audio.source !== 'demo' && ((f.quiet && f.quietFor > 1) || checking) ? 0 : 1;
+  let arm = audio.source !== 'demo' && ((f.quiet && f.quietFor > 1) || checking) ? 0 : 1;
+  if (follower && lead) arm = lead.arm;
+  if (rotating && !follower && calm > 0.5 && now - paletteT > paletteEvery) {   // a different palette every so often; the colours ease across
+    paletteT = now;
+    setPreset(presetIx + 1 + (Math.random() * (PALETTES.length - 1) | 0), false);
+  }
+  if (wallpaper && !follower && now - lookT > 0.2) {          // five times a second, tell the host how this screen looks
+    lookT = now;
+    const t = palette.to;
+    post({ type: 'look', look: { scene: u.scene, K: u.K, C: base.C, T: vt, to: { a: [...t.a], b: [...t.b], f: [...t.f], d: [...t.d] }, art: artUrl, artc, arm } });
+  }
   u.ARM += (arm - u.ARM) * Math.min(1, dt * 2);
   if (SCENES[u.scene].monitor && now - monT > 0.08) {       // the monitor's readouts, a dozen times a second
     monT = now;
@@ -509,7 +533,14 @@ if (wallpaper) {
     opacity: v => { $('gl').style.opacity = +v; },             // below 1 the desktop shows through the picture
     songid: v => { if (!!v !== songId.enabled) setSongId(!!v); },
     card: v => body.classList.toggle('np-on', !!v),
-    stayOn: v => { if (v) { veil = veilTo = 0; } },           // keep drawing through silence instead of handing back to the wallpaper
+    stayOn: v => { if (v) { veil = veilTo = 0; } },
+    paletteEvery: v => { paletteEvery = Math.max(2, +v || 45); },
+    follower: v => {
+      if (!!v === follower) return;
+      follower = !!v;
+      if (follower) { cTarget = null; clearSongDisplay(); }
+      else { if (followArt) renderer.setArt(null); lead = null; followArt = null; }   // this screen leads now: its own Song ID takes over
+    },           // keep drawing through silence instead of handing back to the wallpaper
   };
   window.phospheneHost = {
     info: () => ({ scenes: SCENES.map(s => s.name), palettes: PALETTES.map(p => p.name) }),
@@ -523,8 +554,43 @@ if (wallpaper) {
     set(key, value) { if (setting[key]) setting[key](value); },
     setScene: i => setScene(i, { quiet: true }),
     next: () => nextLook(),
+    go: i => lookAt(i),                                        // the skip button and the menu's stepper
+    // a caption that fades in at the bottom left of the desktop and out again (the scene's name after a skip)
+    label(text) {
+      let el = $('wpLabel');
+      if (!el) { el = document.createElement('div'); el.id = 'wpLabel'; el.className = 'wp-label'; body.appendChild(el); }
+      el.textContent = text;
+      el.classList.remove('show'); void el.offsetWidth; el.classList.add('show');
+    },
     setAuto: on => setAuto(!!on),
-    setPalette: i => setPreset(i, false),
+    // a palette from the menu stays until another is picked; -1 hands the choice back to the scenes and the album
+    // -2 changes palette every so often on its own clock.
+    setPalette: i => {
+      rotating = i === -2; pinned = i >= 0 || rotating;
+      if (i >= 0) setPreset(i, false); else if (rotating) paletteT = performance.now() / 1000; else if (palette.album) palette.to = palette.album;
+    },
+    // show this palette now without changing the mode: the menu's stepper, and the random start
+    showPreset: i => { presetIx = (i + PALETTES.length) % PALETTES.length; palette.to = PALETTES[presetIx]; paletteT = performance.now() / 1000; post({ type: 'palette', index: presetIx }); },
+    // another display's engine leads: take its scene, symmetry, palette, hue, clock and album art
+    follow(s) {
+      if (!follower || !s) return;
+      const first = !lead;
+      lead = { ...s, at: performance.now() / 1000 };
+      if (s.scene !== u.scene) setScene(s.scene, { quiet: true });
+      if (s.K !== u.K) setSymmetry(s.K);
+      palette.to = s.to;
+      if (first) { base.C = s.C; vt = s.T; }
+      if (s.art !== followArt) {
+        followArt = s.art;
+        if (!s.art) renderer.setArt(null);
+        else loadArt(s.art).then(img => { if (followArt === s.art) renderer.setArt(img); }).catch(() => {});
+      }
+    },
+    // how much of each screen edge the menu bar and Dock take up, so the song card can sit clear of them
+    insets(top, right, bottom, left) {
+      const st = document.documentElement.style;
+      st.setProperty('--inset-t', top + 'px'); st.setProperty('--inset-r', right + 'px'); st.setProperty('--inset-b', bottom + 'px'); st.setProperty('--inset-l', left + 'px');
+    },
     // optional: a copy of the user's wallpaper image for this screen, to liquefy it instead of dissolving through it
     backdrop(url) {
       if (!url) { hasBackdrop = false; renderer.setBackdrop(null); return; }
@@ -542,6 +608,9 @@ if (wallpaper) {
       rms: +(audio.rms || 0).toFixed(4), bpm: Math.round(F().bpm), note: audio.tones.m.name, songState: songId.state,
       song: song ? song.title + ' / ' + song.artist : null, fps: Math.round(fpsNow), size: [renderer.W, renderer.H],
       canvas: [renderer.CW, renderer.CH], backdrop: hasBackdrop, err: renderer.lastError || null,
+      label: $('wpLabel') ? $('wpLabel').textContent : null,
+      follower, pinned, rotating, K: u.K, hue: +base.C.toFixed(3), clock: +vt.toFixed(2), to: palette.to.a.concat(palette.to.d).map(v => +v.toFixed(3)),
+      cur: palette.cur.a.concat(palette.cur.d).map(v => +v.toFixed(3)), art: follower ? followArt : artUrl,
     }),
     // the centre pixel as it is composited, alpha included (self-test: 0 alpha means the desktop shows through)
     pixel() {

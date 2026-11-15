@@ -20,7 +20,17 @@ for s in 16 32 128 256; do
 done
 iconutil -c icns $ICONS -o "$APP/Contents/Resources/AppIcon.icns" 2>/dev/null || true
 rm -rf $ICONS
-codesign --force -s - "$APP" >/dev/null 2>&1
-echo "Built $APP"
+# Sign with the local identity if ./setup-signing.sh has been run: the app then keeps the same identity across
+# rebuilds, so macOS keeps its audio permission. Otherwise sign ad hoc (macOS asks again after every rebuild).
+NAME="Phosphene Wallpaper Local Signing"
+KEYCHAIN="$HOME/Library/Keychains/phosphene-signing.keychain-db"
+PASSFILE="$HOME/Library/Application Support/Phosphene Wallpaper/signing-keychain-password"
+if [[ -f "$KEYCHAIN" && -f "$PASSFILE" ]] && security unlock-keychain -p "$(cat "$PASSFILE")" "$KEYCHAIN" 2>/dev/null \
+   && codesign --force --keychain "$KEYCHAIN" -s "$NAME" "$APP" >/dev/null 2>&1; then
+  echo "Built $APP (signed with the local identity)"
+else
+  codesign --force -s - "$APP" >/dev/null 2>&1
+  echo "Built $APP (ad-hoc signed: run ./setup-signing.sh once to keep the audio permission across rebuilds)"
+fi
 [[ "$1" == "--run" ]] && open "$APP"
 exit 0

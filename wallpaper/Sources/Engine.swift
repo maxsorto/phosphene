@@ -125,6 +125,13 @@ final class WallpaperView: NSObject, WKScriptMessageHandler {
         web.evaluateJavaScript(script) { value, _ in done?(value) }
     }
 
+    /// What the menu bar and the Dock take from each edge of this screen: top, right, bottom, left.
+    var insets: [Int] {
+        let now = NSScreen.screens.first { ($0.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?.uint32Value == UInt32(displayID) } ?? screen
+        let f = now.frame, v = now.visibleFrame
+        return [f.maxY - v.maxY, f.maxX - v.maxX, v.minY - f.minY, v.minX - f.minX].map { max(0, Int($0.rounded())) }
+    }
+
     func show() { window.setFrame(screen.frame, display: false); window.orderFrontRegardless() }
     func hide() { window.orderOut(nil) }
 

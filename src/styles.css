@@ -93,6 +93,15 @@ body.welcome .monitor { display: none; }
 }
 .np.show { transform: none; opacity: 1; }
 body.welcome .np, body.clean:not(.np-on) .np { display: none; }
+/* On the desktop the card sits bottom right, clear of the Dock (the host reports the insets). */
+.wp-label {
+  position: fixed; left: calc(var(--inset-l, 0px) + 28px); bottom: calc(var(--inset-b, 0px) + 26px); pointer-events: none; opacity: 0;
+  font: 500 11px/1 var(--mono); letter-spacing: .22em; text-transform: uppercase; color: rgba(255, 255, 255, .86);
+  text-shadow: 0 1px 10px rgba(0, 0, 0, .65), 0 0 2px rgba(0, 0, 0, .5);
+}
+.wp-label.show { animation: wplabel 2.6s var(--ease) both; }
+@keyframes wplabel { 0% { opacity: 0; transform: translateY(6px); } 12%, 70% { opacity: 1; transform: none; } 100% { opacity: 0; transform: none; } }
+body.wallpaper .np { top: auto; bottom: calc(var(--inset-b, 0px) + 22px); right: calc(var(--inset-r, 0px) + 22px); }
 .np-art { flex: none; width: 104px; height: 104px; border-radius: 18px; background: var(--ink); color: #0a0a0c; display: grid; place-items: center; background-size: cover; background-position: center; box-shadow: 0 10px 30px rgba(0, 0, 0, .45); }
 .np-art svg { width: 44px; height: 44px; stroke-width: 1.5; }
 body.has-art .np-art svg { display: none; }

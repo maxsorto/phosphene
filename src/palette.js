@@ -2,7 +2,18 @@
 // cover and turns them into the ends of the cosine palette the shaders use, so
 // the whole picture takes on the record's colours.
 
-export const DEFAULT_PALETTE = { a: [0.5, 0.5, 0.5], b: [0.5, 0.5, 0.5], k: 1 };
+// Cosine palettes: colour(t) = a + b * cos(2 pi (f t + d)).
+export const PALETTES = [
+  { name: 'Rainbow', a: [.5, .5, .5], b: [.5, .5, .5], f: [1, 1, 1], d: [0, .33, .67] },
+  { name: 'Acid',    a: [.5, .5, .5], b: [.5, .5, .5], f: [1, 1, .5], d: [.8, .9, .3] },
+  { name: 'Orchid',  a: [.5, .5, .5], b: [.5, .5, .5], f: [1, 1, 1], d: [.3, .2, .2] },
+  { name: 'Ember',   a: [.5, .45, .4], b: [.5, .45, .4], f: [1, .7, .4], d: [0, .15, .2] },
+  { name: 'Candy',   a: [.5, .5, .5], b: [.5, .5, .5], f: [2, 1, 0], d: [.5, .2, .25] },
+  { name: 'Lagoon',  a: [.4, .55, .6], b: [.4, .45, .4], f: [1, 1, 1], d: [.55, .25, .1] },
+  { name: 'Coral',   a: [.75, .5, .45], b: [.25, .45, .35], f: [2, 1, 1], d: [0, .25, .25] },
+];
+export const DEFAULT_PALETTE = PALETTES[0];
+export const clonePalette = p => ({ name: p.name, a: [...p.a], b: [...p.b], f: [...p.f], d: [...p.d] });
 
 export function paletteFromImage(img) {
   const S = 40, cv = document.createElement('canvas');
@@ -40,7 +51,7 @@ export function paletteFromImage(img) {
   // keep some brightness so dark covers do not go muddy
   const lum = a[0] * 0.3 + a[1] * 0.59 + a[2] * 0.11;
   if (lum < 0.3) { const k = 0.3 / Math.max(lum, 0.02); for (let i = 0; i < 3; i++) a[i] = Math.min(0.8, a[i] * k); }
-  return { a, b, k: 0.4, c1, c2 };
+  return { name: 'Album', a, b, f: [1, 1, 1], d: [0, 0.132, 0.268], c1, c2 };
 }
 
 export function loadArt(url) {

@@ -1,0 +1,48 @@
+<!doctype html>
+<!-- Development host. Shares a tab's audio once and keeps the capture alive in
+     this outer page, while the app runs in the frame below and can be reloaded
+     as often as needed without asking for the tab again. Not deployed. -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Phosphene · dev host</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #000; color: #eee; font: 13px/1.4 ui-monospace, Menlo, monospace; overflow: hidden; }
+  #bar { position: fixed; z-index: 2; top: 8px; left: 8px; display: flex; gap: 10px; align-items: center; padding: 6px 10px; border-radius: 10px; background: rgba(20,20,22,.8); border: 1px solid rgba(255,255,255,.12); }
+  #bar.shared { opacity: .25; } #bar.shared:hover { opacity: 1; }
+  button { font: inherit; color: #0a0a0c; background: #f4f4f6; border: 0; border-radius: 7px; padding: 6px 12px; cursor: pointer; }
+  iframe { position: fixed; inset: 0; width: 100%; height: 100%; border: 0; }
+  #help { position: fixed; z-index: 3; inset: 0; display: none; place-items: center; background: rgba(0,0,0,.7); font-size: 20px; text-align: center; line-height: 1.7; }
+</style>
+</head>
+<body>
+<div id="bar"><button id="share">Share a tab's audio</button><span id="status">no audio shared yet</span></div>
+<div id="help"><div>In the Chrome dialog: choose <b>Chrome Tab</b>, pick the <b>YouTube</b> tab,<br>keep <b>Also share tab audio</b> on, then press <b>Share</b>.</div></div>
+<iframe id="app" allow="microphone; display-capture; fullscreen; autoplay"></iframe>
+<script>
+  const q = location.search || '?debug&auto=0';
+  const app = document.getElementById('app'), status = document.getElementById('status'), bar = document.getElementById('bar'), help = document.getElementById('help');
+  app.src = '/' + q;
+  window.reloadApp = (query) => { app.src = '/' + (query || q) + (('' + (query || q)).includes('?') ? '&' : '?') + 't=' + Date.now(); };
+  document.getElementById('share').onclick = async () => {
+    help.style.display = 'grid';
+    try {
+      const opts = { video: true, audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false }, systemAudio: 'include' };
+      if (window.CaptureController) { opts.controller = new CaptureController(); }
+      const p = navigator.mediaDevices.getDisplayMedia(opts);
+      try { opts.controller?.setFocusBehavior('no-focus-change'); } catch {}
+      const s = await p;
+      try { opts.controller?.setFocusBehavior('no-focus-change'); } catch {}
+      s.getVideoTracks().forEach(t => t.stop());
+      if (!s.getAudioTracks().length) { status.textContent = 'that share had no audio: try again with "Also share tab audio" on'; return; }
+      window.__phospheneStream = s;
+      s.getAudioTracks()[0].addEventListener('ended', () => { window.__phospheneStream = null; status.textContent = 'sharing stopped'; bar.classList.remove('shared'); });
+      status.textContent = 'tab audio shared: ' + (s.getAudioTracks()[0].label || 'ok');
+      bar.classList.add('shared');
+      window.reloadApp();
+    } catch (e) { status.textContent = 'not shared: ' + e.message; }
+    finally { help.style.display = 'none'; }
+  };
+</script>
+</body>
+</html>

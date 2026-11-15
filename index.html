@@ -20,7 +20,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@200;300;400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="/src/styles.css?v=2">
+<link rel="stylesheet" href="/src/styles.css?v=3">
 </head>
 <body>
 <canvas id="gl"></canvas>
@@ -30,7 +30,7 @@
   <div class="welcome-card glass">
     <div class="brand">
       <img src="/favicon.svg" alt="" class="brand-mark">
-      <div><h1 class="wordmark">phosphene</h1><p class="kicker">audio visualizer / v2</p></div>
+      <div><h1 class="wordmark">phosphene</h1><p class="kicker">audio visualizer / v3</p></div>
     </div>
     <p class="tagline">Turn your music into light. Pick what to listen to.</p>
     <div class="sources">
@@ -62,11 +62,14 @@
 
 <!-- Heart monitor readout (Pulsar scene) -->
 <div id="monitor" class="monitor" aria-hidden="true">
-  <div class="lead">ECG&nbsp;&nbsp;II&nbsp;&nbsp;25 mm/s</div>
-  <div class="vitals">
-    <div class="hr-label">HR <svg id="heart" viewBox="0 0 24 24"><path d="M12 20.5s-7.5-4.6-9.3-9.4C1.6 8 3.6 4.5 7.1 4.5c2 0 3.6 1.1 4.9 2.9 1.3-1.8 2.9-2.9 4.9-2.9 3.5 0 5.5 3.5 4.4 6.6-1.8 4.8-9.3 9.4-9.3 9.4z"/></svg></div>
-    <div class="hr"><span id="bpm">--</span><small>BPM</small></div>
-  </div>
+  <div class="mon-lane mon-g"><span class="mon-lead">I&nbsp;&nbsp;PULSE · KICK</span>
+    <div class="mon-val"><small>HR <svg id="heart" viewBox="0 0 24 24"><path d="M12 20.5s-7.5-4.6-9.3-9.4C1.6 8 3.6 4.5 7.1 4.5c2 0 3.6 1.1 4.9 2.9 1.3-1.8 2.9-2.9 4.9-2.9 3.5 0 5.5 3.5 4.4 6.6-1.8 4.8-9.3 9.4-9.3 9.4z"/></svg></small><b id="bpm">--</b><i>BPM</i></div></div>
+  <div class="mon-lane mon-c"><span class="mon-lead">II&nbsp;&nbsp;MELODY</span>
+    <div class="mon-val"><small>NOTE</small><b id="monNote">--</b><i id="monKey">KEY --</i></div></div>
+  <div class="mon-lane mon-y"><span class="mon-lead">III&nbsp;&nbsp;PLETH · BASS</span>
+    <div class="mon-val"><small>ENERGY</small><b id="monEn">--</b><i>%</i></div></div>
+  <div class="mon-lane mon-m"><span class="mon-lead">IV&nbsp;&nbsp;SPECTRUM · A1 TO A8</span>
+    <div class="mon-val"><small>BEAT</small><b id="monBar">-</b><i>OF 4</i></div></div>
 </div>
 
 <!-- Now playing pill (top right, surfaces every 30 s) -->
@@ -112,6 +115,7 @@
   <label class="row"><span>Sensitivity</span><input type="range" id="sens" min="0.3" max="3" step="0.05" value="1"></label>
   <label class="row"><span>Trails</span><input type="range" id="trails" min="0" max="1" step="0.01" value="0.4"></label>
   <label class="row"><span>Goo</span><input type="range" id="goo" min="0" max="1" step="0.01" value="0.5"></label>
+  <label class="row"><span>Melody <small>how hard the tune moves things</small></span><input type="range" id="melody" min="0" max="2" step="0.05" value="1"></label>
   <div class="row"><span>Symmetry</span>
     <div class="stepper"><button id="symDown">−</button><output id="symVal">8</output><button id="symUp">+</button></div></div>
   <div class="row"><span>Quality</span>
@@ -137,6 +141,7 @@
       <dt><kbd>←</kbd> <kbd>→</kbd> <kbd>Space</kbd></dt><dd>Previous / next scene</dd>
       <dt><kbd>A</kbd></dt><dd>Auto-cycle on or off</dd>
       <dt><kbd>C</kbd></dt><dd>Shift colors</dd>
+      <dt><kbd>P</kbd></dt><dd>Next palette</dd>
       <dt><kbd>G</kbd></dt><dd>Goo: off, medium, max</dd>
       <dt><kbd>I</kbd></dt><dd>Name this song</dd>
       <dt><kbd>[</kbd> <kbd>]</kbd></dt><dd>Less / more symmetry</dd>
@@ -153,6 +158,6 @@
 <div id="fatal" class="fatal"></div>
 <input id="fileInput" type="file" accept="audio/*" hidden>
 <audio id="audio" loop></audio>
-<script type="module" src="/src/main.js?v=2"></script>
+<script type="module" src="/src/main.js?v=3"></script>
 </body>
 </html>

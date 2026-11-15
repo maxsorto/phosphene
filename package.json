@@ -1,6 +1,6 @@
 {
   "name": "phosphene",
-  "version": "2.0.0",
+  "version": "3.0.0",
   "private": true,
   "type": "module",
   "description": "A psychedelic audio visualizer for the browser. No build step.",

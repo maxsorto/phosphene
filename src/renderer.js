@@ -1,12 +1,17 @@
 // WebGL2 renderer: one program per scene (compiled on first use and pre-warmed
-// for the next scene), a ping-pong pair of feedback buffers, and the textures
-// the scenes read: spectrum, waveform, spectrogram ring, heartbeat ring, album
-// art. A particle pass draws attractors for scenes that ask for it. Resolution
-// adapts to keep the frame rate smooth.
-import { VS, DISPLAY_FS, POINTS_VS, POINTS_FS, SCENES, sceneSource } from './shaders.js';
+// for the next scene), a ping-pong pair of mip-mapped feedback buffers, and the
+// textures the scenes read: log spectrum, chroma, waveform, the history ring,
+// the heartbeat ring and album art. Overlay passes draw additive points for
+// scenes that ask for them. The canvas stays at display resolution; the
+// feedback buffers scale per scene and adapt to keep the frame rate smooth.
+import { VS, DISPLAY_FS, OVERLAYS, POINTS_FS, SCENES, sceneSource } from './shaders.js';
+import { LS } from './tones.js';
 
-const F1 = ['T', 'B', 'M', 'H', 'BEAT', 'K', 'Z', 'C', 'TR', 'KICK', 'SNARE', 'HAT', 'PH', 'BAR', 'BT', 'BPM', 'EN', 'DROP', 'BP', 'GOO', 'IRID', 'PIT', 'HASART', 'ARTC', 'PK'];
-const SG_ROWS = 256, SG_INTERVAL = 1 / 30;
+const F1 = ['T', 'B', 'M', 'H', 'BEAT', 'K', 'Z', 'C', 'TR', 'KICK', 'SNARE', 'HAT', 'PH', 'BAR', 'BT', 'BPM', 'EN', 'DROP', 'BP',
+  'GOO', 'IRID', 'ARTC', 'MEL', 'NOTE', 'MELV', 'MELH', 'TONE', 'SP', 'ARM'];
+const F3 = ['PA', 'PB', 'PF', 'PD'];
+const SAMPLERS = ['P', 'F', 'ECG', 'W', 'SG', 'ART', 'CH'];
+const SG_ROWS = 256, SG_W = 256, SG_INTERVAL = 1 / 30, HIST_AT = 224;
 
 export class Renderer {
   constructor(canvas, { mobile = false } = {}) {
@@ -19,13 +24,13 @@ export class Renderer {
     this.maxPixels = mobile ? 1.3e6 : 4.2e6;
     this.quality = 'auto';             // 'auto' | 'low' | 'medium' | 'high'
     this.autoScale = mobile ? 0.7 : 1;
+    this.sceneScale = 1;               // heavy scenes render their buffer a little smaller
     this.frameTimes = [];
     this.lastAdapt = 0;
     this.programs = new Map();
-    this.pointCount = mobile ? 24000 : 60000;
+    this.overlays = {};
 
     this.display = this.program(VS, DISPLAY_FS);
-    this.points = this.program(POINTS_VS, POINTS_FS);
 
     this.quad = gl.createBuffer();
     gl.bindBuffer(gl.ARRAY_BUFFER, this.quad);
@@ -34,22 +39,25 @@ export class Renderer {
     gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
     gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
 
-    this.specTex = this.tex(gl.R8, 512, 1, gl.RED, gl.UNSIGNED_BYTE);
+    this.specTex = this.tex(gl.R8, LS, 1, gl.RED, gl.UNSIGNED_BYTE);
+    this.texParams(false, false, true); gl.generateMipmap(gl.TEXTURE_2D);      // mips give band averages
+    this.chromaTex = this.tex(gl.R8, 12, 1, gl.RED, gl.UNSIGNED_BYTE, false, true);
     this.waveTex = this.tex(gl.R8, 1024, 1, gl.RED, gl.UNSIGNED_BYTE);
-    this.sgTex = this.tex(gl.R8, 512, SG_ROWS, gl.RED, gl.UNSIGNED_BYTE, true);
+    this.sgTex = this.tex(gl.R8, SG_W, SG_ROWS, gl.RED, gl.UNSIGNED_BYTE, true);
     this.ecgTex = this.tex(gl.R16F, 256, 64, gl.RED, gl.FLOAT);
     this.artTex = this.tex(gl.RGBA8, 4, 4, gl.RGBA, gl.UNSIGNED_BYTE);
+    this.sgRow = new Uint8Array(SG_W);
     this.hasArt = 0; this.ecgHead = 0; this.sgHead = 0; this.sgLast = 0;
 
     this.bufs = [];
     this.resize();
   }
 
-  tex(internal, w, h, format, type, repeatY = false) {
+  tex(internal, w, h, format, type, repeatY = false, repeatX = false) {
     const gl = this.gl, t = gl.createTexture();
     gl.bindTexture(gl.TEXTURE_2D, t);
     gl.texImage2D(gl.TEXTURE_2D, 0, internal, w, h, 0, format, type, null);
-    this.texParams(repeatY);
+    this.texParams(repeatY, repeatX);
     return t;
   }
 
@@ -77,17 +85,26 @@ export class Renderer {
   programFor(i) {
     if (!this.programs.has(i)) {
       try { this.programs.set(i, this.program(VS, sceneSource(SCENES[i]))); }
-      catch (e) { console.error('Scene ' + SCENES[i].name + ' failed to compile:', e.message); this.programs.set(i, null); }
+      catch (e) { console.error('Scene ' + SCENES[i].name + ' failed to compile:', e.message); this.programs.set(i, null); this.lastError = SCENES[i].name + ': ' + e.message; }
     }
     return this.programs.get(i);
   }
   prewarm(i) { if (!this.programs.has(i)) setTimeout(() => this.programFor(i), 50); }
 
-  texParams(repeatY = false) {
+  overlayFor(name) {
+    if (!(name in this.overlays)) {
+      const o = OVERLAYS[name];
+      try { this.overlays[name] = { ...this.program(o.vs, POINTS_FS), count: this.mobile ? o.mobile : o.count, lines: o.lines || 0 }; }
+      catch (e) { console.error('Overlay ' + name + ' failed to compile:', e.message); this.overlays[name] = null; this.lastError = name + ': ' + e.message; }
+    }
+    return this.overlays[name];
+  }
+
+  texParams(repeatY = false, repeatX = false, mips = false) {
     const gl = this.gl;
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, mips ? gl.LINEAR_MIPMAP_LINEAR : gl.LINEAR);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, repeatX ? gl.REPEAT : gl.CLAMP_TO_EDGE);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, repeatY ? gl.REPEAT : gl.CLAMP_TO_EDGE);
   }
 
@@ -96,27 +113,41 @@ export class Renderer {
     gl.bindTexture(gl.TEXTURE_2D, t);
     gl.texImage2D(gl.TEXTURE_2D, 0, this.floatOK ? gl.RGBA16F : gl.RGBA8, w, h, 0, gl.RGBA,
       this.floatOK ? gl.HALF_FLOAT : gl.UNSIGNED_BYTE, null);
-    this.texParams();
+    this.texParams(false, false, true);
+    gl.generateMipmap(gl.TEXTURE_2D);
     const f = gl.createFramebuffer();
     gl.bindFramebuffer(gl.FRAMEBUFFER, f);
     gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, t, 0);
-    return { t, f };
+    gl.clearColor(0, 0, 0, 1); gl.clear(gl.COLOR_BUFFER_BIT);
+    return { t, f, w, h };
   }
 
   scale() { return { low: 0.5, medium: 0.75, high: 1, auto: this.autoScale }[this.quality]; }
   setQuality(q) { this.quality = q; this.resize(); }
+  setSceneScale(s) { if (s !== this.sceneScale) { this.sceneScale = s; this.resize(); } }
 
+  // The canvas follows the display; the feedback buffers follow the quality and
+  // the scene. The picture so far is carried over, so a change of size never flashes.
   resize() {
     const gl = this.gl, dpr = window.devicePixelRatio || 1;
     const cssW = innerWidth, cssH = innerHeight;
     const cap = Math.sqrt(this.maxPixels / (cssW * cssH));
-    const s = Math.min(dpr, cap) * this.scale();
-    const W = Math.max(1, Math.round(cssW * s)), H = Math.max(1, Math.round(cssH * s));
+    const s = Math.min(dpr, cap);
+    const CW = Math.max(1, Math.round(cssW * s)), CH = Math.max(1, Math.round(cssH * s));
+    if (CW !== this.CW || CH !== this.CH) { this.CW = CW; this.CH = CH; this.canvas.width = CW; this.canvas.height = CH; }
+    const k = this.scale() * this.sceneScale;
+    const W = Math.max(1, Math.round(CW * k)), H = Math.max(1, Math.round(CH * k));
     if (W === this.W && H === this.H) return;
+    const old = this.bufs;
     this.W = W; this.H = H;
-    this.canvas.width = W; this.canvas.height = H;
-    this.bufs.forEach(b => { gl.deleteTexture(b.t); gl.deleteFramebuffer(b.f); });
     this.bufs = [this.target(W, H), this.target(W, H)];
+    if (old.length) {
+      gl.bindFramebuffer(gl.READ_FRAMEBUFFER, old[0].f); gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, this.bufs[0].f);
+      gl.blitFramebuffer(0, 0, old[0].w, old[0].h, 0, 0, W, H, gl.COLOR_BUFFER_BIT, gl.LINEAR);
+      gl.bindFramebuffer(gl.READ_FRAMEBUFFER, null); gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, null);
+      gl.bindTexture(gl.TEXTURE_2D, this.bufs[0].t); gl.generateMipmap(gl.TEXTURE_2D);
+      old.forEach(b => { gl.deleteTexture(b.t); gl.deleteFramebuffer(b.f); });
+    }
   }
 
   // Step resolution down when frames run long, back up when there is headroom.
@@ -145,39 +176,45 @@ export class Renderer {
     this.hasArt = 1;
   }
 
-  uniforms(u, s) {
+  uniforms(u, s, w, h) {
     const gl = this.gl;
-    if (u.R) gl.uniform2f(u.R, this.W, this.H);
-    for (const k of F1) if (u[k]) gl.uniform1f(u[k], k === 'T' ? s.T % 3600 : k === 'HASART' ? this.hasArt : s[k]);
-    if (u.PA) gl.uniform3fv(u.PA, s.PA);
-    if (u.PB) gl.uniform3fv(u.PB, s.PB);
-    if (u.P) gl.uniform1i(u.P, 0);
-    if (u.F) gl.uniform1i(u.F, 1);
-    if (u.ECG) gl.uniform1i(u.ECG, 2);
-    if (u.W) gl.uniform1i(u.W, 3);
-    if (u.SG) gl.uniform1i(u.SG, 4);
-    if (u.ART) gl.uniform1i(u.ART, 5);
+    if (u.R) gl.uniform2f(u.R, w, h);
+    for (const k of F1) if (u[k]) gl.uniform1f(u[k], k === 'T' ? s.T % 3600 : s[k]);
+    for (const k of F3) if (u[k]) gl.uniform3fv(u[k], s[k]);
+    SAMPLERS.forEach((k, i) => { if (u[k]) gl.uniform1i(u[k], i); });
+    if (u.HASART) gl.uniform1f(u.HASART, this.hasArt);
     if (u.HEAD) gl.uniform1f(u.HEAD, this.ecgHead);
     if (u.SGH) gl.uniform1f(u.SGH, this.sgHead);
+    if (u.SGF) gl.uniform1f(u.SGF, Math.min(1, Math.max(0, (s.T - this.sgLast) / SG_INTERVAL)));
   }
 
   bindAll(src) {
-    const gl = this.gl, T = [src, this.specTex, this.ecgTex, this.waveTex, this.sgTex, this.artTex];
+    const gl = this.gl, T = [src, this.specTex, this.ecgTex, this.waveTex, this.sgTex, this.artTex, this.chromaTex];
     T.forEach((t, i) => { gl.activeTexture(gl.TEXTURE0 + i); gl.bindTexture(gl.TEXTURE_2D, t); });
     gl.activeTexture(gl.TEXTURE0);
   }
 
   render(audio, state, ecg) {
-    const gl = this.gl, [src, dst] = this.bufs, scene = SCENES[state.scene];
+    const gl = this.gl, scene = SCENES[state.scene];
+    this.setSceneScale(scene.res || 1);
+    const [src, dst] = this.bufs;
     const prog = this.programFor(state.scene);
+    gl.activeTexture(gl.TEXTURE0);
     gl.bindTexture(gl.TEXTURE_2D, this.specTex);
-    gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, 512, 1, gl.RED, gl.UNSIGNED_BYTE, audio.freq);
+    gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, LS, 1, gl.RED, gl.UNSIGNED_BYTE, audio.tones.bytes);
+    gl.generateMipmap(gl.TEXTURE_2D);
+    gl.bindTexture(gl.TEXTURE_2D, this.chromaTex);
+    gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, 12, 1, gl.RED, gl.UNSIGNED_BYTE, audio.tones.chromaBytes);
     gl.bindTexture(gl.TEXTURE_2D, this.waveTex);
-    gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, 1024, 1, gl.RED, gl.UNSIGNED_BYTE, audio.wave);
-    if (state.T - this.sgLast >= SG_INTERVAL) {           // one spectrogram row per 1/30 s: 8.5 s of history
-      this.sgLast = state.T; this.sgHead = (this.sgHead + 1) % SG_ROWS;
+    gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, 1024, 1, gl.RED, gl.UNSIGNED_BYTE, audio.scope);
+    if (state.T - this.sgLast >= SG_INTERVAL || state.T < this.sgLast) {   // a history row every 1/30 s: 8.5 s in all
+      this.sgLast = state.T - this.sgLast > 2 * SG_INTERVAL || state.T < this.sgLast ? state.T : this.sgLast + SG_INTERVAL;
+      this.sgHead = (this.sgHead + 1) % SG_ROWS;
+      const row = this.sgRow;
+      row.set(audio.tones.bytes);
+      for (let i = 0; i < 8; i++) row[HIST_AT + i] = Math.max(0, Math.min(255, state.hist[i] * 255));
       gl.bindTexture(gl.TEXTURE_2D, this.sgTex);
-      gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, this.sgHead, 512, 1, gl.RED, gl.UNSIGNED_BYTE, audio.freq);
+      gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, this.sgHead, SG_W, 1, gl.RED, gl.UNSIGNED_BYTE, row);
     }
     if (scene.ecg) {
       gl.bindTexture(gl.TEXTURE_2D, this.ecgTex);
@@ -187,25 +224,47 @@ export class Renderer {
 
     gl.bindFramebuffer(gl.FRAMEBUFFER, dst.f); gl.viewport(0, 0, this.W, this.H);
     if (prog) {
-      gl.useProgram(prog.p); this.uniforms(prog.u, state);
+      gl.useProgram(prog.p); this.uniforms(prog.u, state, this.W, this.H);
       this.bindAll(src.t);
       gl.drawArrays(gl.TRIANGLES, 0, 3);
     } else {
       gl.clearColor(0, 0, 0, 1); gl.clear(gl.COLOR_BUFFER_BIT);
     }
-    if (scene.points) {
-      gl.useProgram(this.points.p); this.uniforms(this.points.u, state);
+    const ov = scene.overlay && this.overlayFor(scene.overlay);
+    if (ov) {
+      gl.useProgram(ov.p); this.uniforms(ov.u, state, this.W, this.H);
+      this.bindAll(src.t);
       gl.enable(gl.BLEND); gl.blendFunc(gl.ONE, gl.ONE);
       gl.disableVertexAttribArray(0);
-      gl.drawArrays(gl.POINTS, 0, this.pointCount);
+      if (ov.lines) {                                      // a line strip, drawn a few times a pixel apart
+        gl.uniform1f(ov.u.LINE, 1);
+        for (let k = 0; k < ov.lines; k++) { gl.uniform2f(ov.u.OFF, [0, 0.7, -0.7][k], [0, 0.7, 0.7][k]); gl.drawArrays(gl.LINE_STRIP, 0, ov.count); }
+      } else { gl.uniform1f(ov.u.LINE, 0); gl.drawArrays(gl.POINTS, 0, ov.count); }
       gl.enableVertexAttribArray(0);
       gl.disable(gl.BLEND);
     }
 
-    gl.useProgram(this.display.p); this.uniforms(this.display.u, state);
+    gl.activeTexture(gl.TEXTURE0);
     gl.bindTexture(gl.TEXTURE_2D, dst.t);
-    gl.bindFramebuffer(gl.FRAMEBUFFER, null); gl.viewport(0, 0, this.W, this.H);
+    gl.generateMipmap(gl.TEXTURE_2D);                    // the display pass blooms and meters from the mips
+    gl.useProgram(this.display.p); this.uniforms(this.display.u, state, this.CW, this.CH);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null); gl.viewport(0, 0, this.CW, this.CH);
     gl.drawArrays(gl.TRIANGLES, 0, 3);
     this.bufs = [dst, src];
+  }
+
+  // Milliseconds of GPU time per frame for one scene (debugging: ?debug then phosphene.bench()).
+  bench(i, audio, state, ecg, frames = 60) {
+    const gl = this.gl, px = new Uint8Array(4), keep = state.scene, t = state.T;
+    const sync = () => { gl.finish(); gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, px); };
+    state.scene = i;
+    for (let k = 0; k < 12; k++) { state.T += 1 / 60; this.render(audio, state, ecg); }
+    sync();
+    const t0 = performance.now();
+    for (let k = 0; k < frames; k++) { state.T += 1 / 60; this.render(audio, state, ecg); }
+    sync();
+    const ms = (performance.now() - t0) / frames;
+    state.scene = keep; state.T = t;
+    return ms;
   }
 }

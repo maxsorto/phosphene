@@ -103,8 +103,8 @@ export class Features {
     const rms0 = Math.sqrt(e / 1200);
     this.fast += (rms0 - this.fast) * Math.min(1, dt * 8);
     this.slow += (rms0 - this.slow) * Math.min(1, dt * 0.25);
-    this.peakE = Math.max(this.peakE * Math.pow(0.97, dt), this.fast, 1e-4);
-    f.energy = Math.min(1, this.fast / this.peakE);
+    this.peakE = Math.max(this.peakE * Math.pow(0.9, dt), this.fast, 1e-4);
+    f.energy = Math.min(1, Math.pow(this.fast / this.peakE, 0.6) * 1.25);    // spread out: a raw ratio sits near 0.15 for most music
     f.lift = this.slow > 1e-5 ? this.fast / this.slow : 1;
     if (rms !== null) {
       // quiet is relative to the running music level (a 3 s average), so it works the

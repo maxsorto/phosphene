@@ -14,8 +14,8 @@ It listens like a musician. It finds the tempo and locks onto the beat, counts b
 
 <table>
   <tr>
-    <td width="58%"><img src="docs/images/wallpaper-desktop-julia.jpg" alt="Julia Bloom on the desktop"></td>
-    <td width="42%"><img src="docs/images/wallpaper-menu.jpg" alt="The menu bar menu: what to listen to, scene and palette steppers, sliders, lyrics and Song ID"></td>
+    <td width="74%"><img src="docs/images/wallpaper-desktop-julia.jpg" alt="Julia Bloom on the desktop"></td>
+    <td width="26%"><img src="docs/images/wallpaper-menubar.png" alt="The skip button and icon in the menu bar, and the menu: what to listen to, scene and palette steppers, sliders, lyrics and Song ID"></td>
   </tr>
 </table>
 

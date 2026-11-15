@@ -29,6 +29,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var testPaletteMode: Int?                    // self-test: use this palette mode without touching the saved one
     /// The palette setting: a pinned palette's index, -1 to change with the scenes, -2 to change every so often.
     private var paletteMode: Int { testPaletteMode ?? defaults.integer(forKey: "palette") }
+    private var menuShot: String?, menuShotAfter = 10.0   // self-test: open the menu and save pictures of the app's own windows into this folder
     private var testScene: Int?                          // self-test: start on this scene instead of a random one
     private var testSkips = 0                            // self-test: press the skip button this many times
     private var pendingRandom = false                    // music just started: pick a fresh scene and palette once the engine is up
@@ -71,6 +72,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             else if a == "--test-ignore-cover" { ignoreCover = true }
             else if a == "--test-skips", !args.isEmpty { testSkips = Int(args.removeFirst()) ?? 0 }
             else if a == "--test-palette-mode", !args.isEmpty { testPaletteMode = Int(args.removeFirst()) }
+            else if a == "--menu-shot", !args.isEmpty { menuShot = args.removeFirst() }
+            else if a == "--menu-shot-after", !args.isEmpty { menuShotAfter = Double(args.removeFirst()) ?? 10 }
             else if a == "--test-scene", !args.isEmpty { testScene = Int(args.removeFirst()) }
             else if a == "--test-palette-every", !args.isEmpty { testPaletteEvery = Double(args.removeFirst()) ?? 0 }
             else if a == "--test-audio", !args.isEmpty { testAudio = Self.decode(args.removeFirst(), rate: &testRate); testEnd = testAudio.count }
@@ -99,6 +102,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         every(3) { [weak self] in self?.followApp() }
         every(1) { [weak self] in self?.checkCover() }
         if testSkips > 0 { every(2) { [weak self] in guard let self, self.mode == .awake, self.testSkips > 0, !self.sceneNames.isEmpty else { return }; self.testSkips -= 1; self.step(1); self.stepPalette(1) } }
+        if menuShot != nil { DispatchQueue.main.asyncAfter(deadline: .now() + menuShotAfter) { [weak self] in self?.shootMenu() } }
         if statusFile != nil { every(1) { [weak self] in self?.writeStatus() } }
         if grabFile != nil { DispatchQueue.main.asyncAfter(deadline: .now() + grabAfter) { [weak self] in self?.grab() } }
 
@@ -533,6 +537,44 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc private func quit() { NSApp.terminate(nil) }
 
     // MARK: Self-test
+
+    /// Opens the menu, saves pictures of this app's own windows (an app may always capture itself), and closes it.
+    private func shootMenu() {
+        guard let dir = menuShot else { return }
+        let t = Timer(timeInterval: 1.5, repeats: false) { [weak self] _ in
+            self?.captureOwnWindows(to: dir)
+            self?.menu.cancelTracking()
+        }
+        RunLoop.main.add(t, forMode: .common)
+        status.button?.performClick(nil)                       // blocks while the menu is open; the timer above runs meanwhile
+    }
+    private func captureOwnWindows(to dir: String) {
+        typealias Capture = @convention(c) (CGRect, UInt32, UInt32, UInt32) -> Unmanaged<CGImage>?
+        guard let sym = dlsym(UnsafeMutableRawPointer(bitPattern: -2), "CGWindowListCreateImage") else { return }
+        let capture = unsafeBitCast(sym, to: Capture.self)
+        func save(_ image: CGImage?, _ name: String) {
+            guard let image, let data = NSBitmapImageRep(cgImage: image).representation(using: .png, properties: [:]) else { return }
+            try? data.write(to: URL(fileURLWithPath: dir).appendingPathComponent(name))
+        }
+        let pid = ProcessInfo.processInfo.processIdentifier
+        let list = CGWindowListCopyWindowInfo([.optionOnScreenOnly], kCGNullWindowID) as? [[String: Any]] ?? []
+        var report: [String] = []
+        for w in list where (w[kCGWindowLayer as String] as? Int ?? 0) >= 24 {                    // who owns the menu, if not this app
+            let b = w[kCGWindowBounds as String] as? [String: Any] ?? [:]
+            report.append("other \(w[kCGWindowOwnerName as String] ?? "?") layer \(w[kCGWindowLayer as String] ?? 0) \(b["X"] ?? 0),\(b["Y"] ?? 0) \(b["Width"] ?? 0)x\(b["Height"] ?? 0)")
+        }
+        for w in list where (w[kCGWindowOwnerPID as String] as? pid_t) == pid {
+            let layer = w[kCGWindowLayer as String] as? Int ?? 0, num = w[kCGWindowNumber as String] as? UInt32 ?? 0
+            let b = w[kCGWindowBounds as String] as? [String: Any] ?? [:]
+            report.append("window \(num) layer \(layer) bounds \(b["X"] ?? 0),\(b["Y"] ?? 0) \(b["Width"] ?? 0)x\(b["Height"] ?? 0)")
+            if layer > 0 { save(capture(.null, 8, num, 1 | 8)?.takeRetainedValue(), "window-\(layer)-\(num).png") }   // this window alone, at full resolution
+        }
+        // everything this app may see on the main display: its own windows over a blank desktop, with the system menu bar
+        if let main = NSScreen.screens.first, let id = (main.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?.uint32Value {
+            save(capture(CGDisplayBounds(id), 1, 0, 8)?.takeRetainedValue(), "display.png")
+        }
+        try? report.joined(separator: "\n").write(toFile: dir + "/windows.txt", atomically: true, encoding: .utf8)
+    }
 
     private static func decode(_ path: String, rate: inout Double) -> [Float] {
         guard let file = try? AVAudioFile(forReading: URL(fileURLWithPath: path)),

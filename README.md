@@ -8,9 +8,47 @@ It listens like a musician. It finds the tempo and locks onto the beat, counts b
 
 <p align="center"><b>Open it: <a href="https://phosphene-viz.vercel.app">phosphene-viz.vercel.app</a></b><br>Desktop Chrome, Edge or Arc for tab audio. Phones work with the mic.</p>
 
-> **Phosphene on your Mac desktop.** The best way to live with it: a small menu bar app that turns your desktop into the visualizer. Your own wallpaper stays put until music plays, then the scene burns through it on every display and melts back when the music stops. It hears Spotify, Music or anything else the Mac plays directly, with no microphone and no tab sharing. Skip scenes with one click in the menu bar, step through palettes, or let both change by themselves. See [The desktop wallpaper (Mac)](#the-desktop-wallpaper-mac).
+## The desktop wallpaper (Mac)
 
-The website: no install, no account, no build step. The visuals and all the analysis run on your device. Song ID sends only a sound fingerprint (a few hundred spectral peaks, never audio), and you can turn it off.
+<p align="center"><img src="docs/images/wallpaper-desktop.jpg" alt="Phosphene as the desktop wallpaper, with its menu bar menu open" width="100%"></p>
+
+<table>
+  <tr>
+    <td width="58%"><img src="docs/images/wallpaper-desktop-julia.jpg" alt="Julia Bloom on the desktop"></td>
+    <td width="42%"><img src="docs/images/wallpaper-menu.jpg" alt="The menu bar menu: what to listen to, scene and palette steppers, sliders, lyrics and Song ID"></td>
+  </tr>
+</table>
+
+The best way to live with Phosphene: a small menu bar app that turns your Mac's desktop into the visualizer. Your own wallpaper stays put until music plays, then the scene burns through it on every display and melts back when the music stops.
+
+`wallpaper/` is a small native Mac app that runs the same engine as your desktop wallpaper. It is separate from the website and is not deployed anywhere: you build it and run it on your own Mac.
+
+- **Your wallpaper stays your wallpaper.** While nothing plays, the app is invisible and asleep, and costs nothing. When music starts, the visualizer burns through your desktop (the window is genuinely transparent, so it works over any wallpaper, even a video one) and melts back a few seconds after the music stops. Desktop icons stay on top.
+- **It hears the Mac directly.** No microphone, no tab sharing: it taps what the Mac is playing, either everything or one app (Spotify, Music, a browser), chosen from the menu bar. This is the "capture the desktop apps directly" item that used to be on the roadmap.
+- **Menu bar controls.** What to listen to, scene (or change with the music), palette, opacity, goo and melody, what to do when the music stops (show my wallpaper, or keep drifting slowly), frame rate, which displays, Song ID, open at login.
+- **Palettes your way.** Pin one, let it change with the scenes, or have it change every so often on its own (about every 45 seconds, easing across). A second stepper row in the menu steps through palettes.
+- **Skip from the menu bar.** A small skip button beside the icon goes to the next scene in one click (right-click or Option-click for the previous one), and a stepper row in the menu steps through scenes without closing it. The scene's name fades in at the bottom left of the desktop for a moment. The button can be hidden from the menu.
+- **Every display matches.** One display's engine leads and the others copy its scene, palette, hue, clock and album art, so two screens never drift into different colours. A palette picked in the menu stays until you pick another, even when Song ID finds the album.
+- **Lyrics on the desktop.** With Song ID on, the words of the song play over the picture on every display, clear of the Dock, the song card and the scene label ("Show lyrics" in the menu, on by default). See [Lyrics](#lyrics).
+- **A fresh look each time.** When music starts it opens on a random scene and palette (a menu switch turns this off), and the song card sits bottom right, clear of the Dock.
+- **It stays out of the way.** It pauses when the desktop is covered by a full-screen app, when the displays sleep and when the screen is locked, and drops to 20 frames a second in silence if you ask it to stay on.
+
+```sh
+cd wallpaper
+./build.sh --run
+```
+
+That needs Xcode's command line tools and macOS 14.2 or later. The first time it listens, macOS asks to let it record system audio: that is the permission for hearing what the Mac plays. Nothing is recorded; the samples are analysed in memory, and with Song ID on, only the usual fingerprint leaves the Mac. To keep it, drag `wallpaper/build/Phosphene Wallpaper.app` to Applications and turn on "Open at login" in its menu.
+
+Run `./setup-signing.sh` once before building if you plan to rebuild. It creates a self-signed signing identity in its own keychain, used only for this app. Without it the app is ad-hoc signed, every rebuild looks like a new app to macOS, and the audio permission is asked for again each time.
+
+To test it without touching the audio permission, `Phosphene Wallpaper.app/Contents/MacOS/PhospheneWallpaper --test-audio song.m4a --test-seconds 10 --status-file status.json` feeds a file through the same path and writes what the app and the engine are doing once a second.
+
+How it works: a borderless, click-through window at desktop level (above the wallpaper, below the icons) on each display holds a transparent `WKWebView`, which loads the engine from the app bundle with `?wallpaper`. WebKit draws WebGL through Metal, so the shaders run on the same GPU path a hand-written Metal port would use. Audio comes from a Core Audio process tap, is mixed to mono in Swift and pushed to the page sixty times a second, where `src/spectrum.js` (a JavaScript FFT that matches the Web Audio analyser) feeds the same ears as the website. Swift decides when music is playing (most of a second of sound to wake, four seconds of silence to sleep, so a notification ping does not count) and tells the engine to melt in or out; the engine's display pass does the dissolve and writes a transparent canvas where the desktop should show. Song ID and album art are relayed through the website's functions; lyrics are looked up by the app itself.
+
+## The website
+
+No install, no account, no build step. The visuals and all the analysis run on your device. Song ID sends only a sound fingerprint (a few hundred spectral peaks, never audio), and you can turn it off.
 
 <table>
   <tr>
@@ -234,33 +272,6 @@ GPU time per frame at 1600 x 900 on an M2 Max, v2 against v3 measured back to ba
 
 Where it came from: the display pass reads mips instead of 27 taps a pixel; the feedback flow uses noise with an analytic gradient instead of twelve noise lookups; Pulsar only visits the few ridgelines that can reach a pixel; Scope's beam is geometry instead of a 96-segment distance loop; Aurora and Gyroid march fewer, dithered steps into smaller buffers. Vitals and Vinyl do more than before and cost a little more.
 
-## The desktop wallpaper (Mac)
-
-`wallpaper/` is a small native Mac app that runs the same engine as your desktop wallpaper. It is separate from the website and is not deployed anywhere: you build it and run it on your own Mac.
-
-- **Your wallpaper stays your wallpaper.** While nothing plays, the app is invisible and asleep, and costs nothing. When music starts, the visualizer burns through your desktop (the window is genuinely transparent, so it works over any wallpaper, even a video one) and melts back a few seconds after the music stops. Desktop icons stay on top.
-- **It hears the Mac directly.** No microphone, no tab sharing: it taps what the Mac is playing, either everything or one app (Spotify, Music, a browser), chosen from the menu bar. This is the "capture the desktop apps directly" item that used to be on the roadmap.
-- **Menu bar controls.** What to listen to, scene (or change with the music), palette, opacity, goo and melody, what to do when the music stops (show my wallpaper, or keep drifting slowly), frame rate, which displays, Song ID, open at login.
-- **Palettes your way.** Pin one, let it change with the scenes, or have it change every so often on its own (about every 45 seconds, easing across). A second stepper row in the menu steps through palettes.
-- **Skip from the menu bar.** A small skip button beside the icon goes to the next scene in one click (right-click or Option-click for the previous one), and a stepper row in the menu steps through scenes without closing it. The scene's name fades in at the bottom left of the desktop for a moment. The button can be hidden from the menu.
-- **Every display matches.** One display's engine leads and the others copy its scene, palette, hue, clock and album art, so two screens never drift into different colours. A palette picked in the menu stays until you pick another, even when Song ID finds the album.
-- **Lyrics on the desktop.** With Song ID on, the words of the song play over the picture on every display, clear of the Dock, the song card and the scene label ("Show lyrics" in the menu, on by default). See [Lyrics](#lyrics).
-- **A fresh look each time.** When music starts it opens on a random scene and palette (a menu switch turns this off), and the song card sits bottom right, clear of the Dock.
-- **It stays out of the way.** It pauses when the desktop is covered by a full-screen app, when the displays sleep and when the screen is locked, and drops to 20 frames a second in silence if you ask it to stay on.
-
-```sh
-cd wallpaper
-./build.sh --run
-```
-
-That needs Xcode's command line tools and macOS 14.2 or later. The first time it listens, macOS asks to let it record system audio: that is the permission for hearing what the Mac plays. Nothing is recorded; the samples are analysed in memory, and with Song ID on, only the usual fingerprint leaves the Mac. To keep it, drag `wallpaper/build/Phosphene Wallpaper.app` to Applications and turn on "Open at login" in its menu.
-
-Run `./setup-signing.sh` once before building if you plan to rebuild. It creates a self-signed signing identity in its own keychain, used only for this app. Without it the app is ad-hoc signed, every rebuild looks like a new app to macOS, and the audio permission is asked for again each time.
-
-To test it without touching the audio permission, `Phosphene Wallpaper.app/Contents/MacOS/PhospheneWallpaper --test-audio song.m4a --test-seconds 10 --status-file status.json` feeds a file through the same path and writes what the app and the engine are doing once a second.
-
-How it works: a borderless, click-through window at desktop level (above the wallpaper, below the icons) on each display holds a transparent `WKWebView`, which loads the engine from the app bundle with `?wallpaper`. WebKit draws WebGL through Metal, so the shaders run on the same GPU path a hand-written Metal port would use. Audio comes from a Core Audio process tap, is mixed to mono in Swift and pushed to the page sixty times a second, where `src/spectrum.js` (a JavaScript FFT that matches the Web Audio analyser) feeds the same ears as the website. Swift decides when music is playing (most of a second of sound to wake, four seconds of silence to sleep, so a notification ping does not count) and tells the engine to melt in or out; the engine's display pass does the dissolve and writes a transparent canvas where the desktop should show. Song ID and album art are relayed through the website's functions; lyrics are looked up by the app itself.
-
 ## Run it locally
 
 ```sh
@@ -277,6 +288,7 @@ Deploying is just Vercel: `vercel --prod` from the repo root, no settings needed
 
 ## What's next
 
+- **Screen saver mode.** The same engine as a Mac screen saver, so the visualizer takes over when the Mac is idle and keeps listening to whatever is playing.
 - **Liquify.** The engine can already draw a copy of the wallpaper image and push it around as the visualizer takes over; the app does not use it yet because macOS does not reliably say which image is on the desktop.
 - **Syphon and NDI output** from the Mac app, so VJ tools (Resolume, VDMX, OBS) can take the visuals as a video source.
 - Preset sharing by link, clip recording (canvas capture to video), MIDI and OSC control for live sets, and lyrics-aware moments once the song is named.

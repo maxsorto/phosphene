@@ -2,7 +2,7 @@
 
 # phosphene
 
-A psychedelic audio visualizer that runs in your browser, and as the living wallpaper of your Mac. Twenty-three GPU shader worlds (fractals, a wormhole, liquid light, dripping goop, an all-seeing eye, oil-slick rainbows, a terrain built from your song, a bedside monitor, a spinning record and more) that melt and pulse with whatever you are listening to: Spotify in a browser tab, YouTube, your microphone or a local file.
+A psychedelic audio visualizer that runs in your browser, and as the living wallpaper of your Mac. Twenty-four GPU shader worlds (fractals, a wormhole, liquid light, dripping goop, an all-seeing eye, oil-slick rainbows, a terrain built from your song, a bedside monitor, a spinning record and more) that melt and pulse with whatever you are listening to: Spotify in a browser tab, YouTube, your microphone or a local file.
 
 It listens like a musician. It finds the tempo and locks onto the beat, counts bars so scene changes land on the downbeat, tells kicks from snares from hats, notices drops, and works out the key. And it follows the **melody**: every scene gets a semitone-resolution spectrum, the twelve notes of the scale and the pitch of the tune itself, so the shapes move with the notes and not only with the drums. It can also name the song that is playing, Shazam-style, and pull the album's colours into the picture.
 
@@ -89,6 +89,7 @@ The website: no install, no account, no build step. The visuals and all the anal
 | 21 | Scope | An oscilloscope: a phosphor beam, the waveform wrapped around a ring, twelve lamps | The actual waveform against a delayed copy of itself, auto-gained to fill the dial; the lamps light the notes of the scale |
 | 22 | Swarm | Sixty thousand particles on a Clifford strange attractor | Each particle is tuned to a note and glows when it sounds; the melody leans the attractor's shape; kicks fatten the particles |
 | 23 | Crystal | Voronoi cells, each lit by its own note | A cell shines when its pitch sounds; the melody's own cells flash on each note; seams glow on snares |
+| 24 | Julia Bloom V2 | Julia Bloom that comes apart every sixteen beats and rejoins as a different shape: two to five arms, sometimes a mirrored skull or mask, sometimes extra limbs | The melody picks the shape as in Julia Bloom, and each new note pushes it over the edge; the beat count decides when the pieces part and what they come back as |
 
 Every scene draws into a feedback buffer. Each frame the previous image is melted along a slowly turning flow, dripped, zoomed, swirled and hue-shifted a little before the new one is laid on top. That is where the trails and the oozing come from; the **Goo** setting is how much. Kicks punch the zoom and split the colour channels, drops crank everything, and each new note tints the trails, so a tune leaves rings of different colours behind it.
 
@@ -282,7 +283,7 @@ v3 (this: the melodic ear and a melody-driven rewrite of every scene, rebuilt Au
 ## Repository layout
 
 - `index.html` the app shell (welcome screen, dock, settings, monitor readouts)
-- `src/scenes.js` the twenty-three scenes, GLSL plus feedback settings
+- `src/scenes.js` the twenty-four scenes, GLSL plus feedback settings
 - `src/shaders.js` the shared GLSL prelude, feedback, display and overlay passes
 - `src/renderer.js` WebGL2 setup, per-scene programs, textures and the history ring, overlays, mips, adaptive resolution, the benchmark
 - `src/audio.js` sources, analysers, the audio tap, band levels, the demo groove

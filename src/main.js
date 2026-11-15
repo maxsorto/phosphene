@@ -56,6 +56,7 @@ const palette = { cur: clonePalette(PALETTES[presetIx]), to: PALETTES[presetIx],
 let pinned = false;                                         // the wallpaper's menu chose this palette: neither an album nor a scene change replaces it
 // With several displays one engine leads and the others follow its look, so every screen shows the same colours.
 let follower = false, lead = null, artUrl = null, followArt = null, lookT = 0;
+let rawBT = 0, btOff = 0;                                   // this engine's own beat count, and a follower's offset onto the leader's
 let rotating = false, paletteT = 0, paletteEvery = 45;                         // the wallpaper's "change every so often": a new palette about every 45 seconds
 function setPreset(i, announce) {
   presetIx = (i + PALETTES.length) % PALETTES.length;
@@ -484,7 +485,12 @@ function frame(now) {
   u.C = base.C + 0.4 * lean * m.conf;                        // a rising tune slides the palette one way, a falling one the other
   const hh = u.hist; hh[0] = m.mel; hh[1] = m.conf; hh[2] = f.energy; hh[3] = f.locked ? (Math.exp(-f.phase * 3.5) + 0.25 * Math.exp(-(((f.phase - 0.42) / 0.12) ** 2))) * (0.35 + 0.65 * Math.min(1, L.b)) : L.b / 1.5; hh[4] = f.kick / 1.5; hh[5] = m.note; hh[6] = L.m / 1.5; hh[7] = L.h / 1.5;
   const ph = f.phase;
-  u.BT = f.bpm ? f.beatNo + ph * ph * (3 - 2 * ph) : u.BT + dt * 2 * rate;
+  rawBT = f.bpm ? f.beatNo + ph * ph * (3 - 2 * ph) : rawBT + dt * 2 * rate;
+  if (follower && lead && lead.BT != null) {                  // count beats from where the leader does, so beat-timed changes land together
+    const d = lead.BT + (now - lead.at) * (f.bpm ? f.bpm / 60 : 2 * rate) - (rawBT + btOff);
+    if (!f.bpm) btOff += d; else if (Math.abs(d) > 0.6) btOff += Math.round(d);
+  } else if (!follower) btOff = 0;
+  u.BT = rawBT + btOff;
   u.Z += dt * rate * (0.35 + L.b * 1.6);
   u.SP = (u.SP + dt * rate * 3.49 * (1 - 2.4 * f.drop)) % 6283.1853;       // 33 1/3 rpm; a drop spins the record back
   if (auto && now - sceneStart > (calm < 0.5 ? 600 : 90)) setScene(u.scene + 1);   // keep moving through quiet passages
@@ -508,7 +514,7 @@ function frame(now) {
   if (wallpaper && !follower && now - lookT > 0.2) {          // five times a second, tell the host how this screen looks
     lookT = now;
     const t = palette.to;
-    post({ type: 'look', look: { scene: u.scene, K: u.K, C: base.C, T: vt, to: { a: [...t.a], b: [...t.b], f: [...t.f], d: [...t.d] }, art: artUrl, artc, arm } });
+    post({ type: 'look', look: { scene: u.scene, K: u.K, C: base.C, T: vt, BT: u.BT, to: { a: [...t.a], b: [...t.b], f: [...t.f], d: [...t.d] }, art: artUrl, artc, arm } });
   }
   u.ARM += (arm - u.ARM) * Math.min(1, dt * 2);
   if (SCENES[u.scene].monitor && now - monT > 0.08) {       // the monitor's readouts, a dozen times a second
@@ -609,7 +615,7 @@ if (wallpaper) {
       song: song ? song.title + ' / ' + song.artist : null, fps: Math.round(fpsNow), size: [renderer.W, renderer.H],
       canvas: [renderer.CW, renderer.CH], backdrop: hasBackdrop, err: renderer.lastError || null,
       label: $('wpLabel') ? $('wpLabel').textContent : null,
-      follower, pinned, rotating, K: u.K, hue: +base.C.toFixed(3), clock: +vt.toFixed(2), to: palette.to.a.concat(palette.to.d).map(v => +v.toFixed(3)),
+      follower, pinned, rotating, BT: +u.BT.toFixed(2), K: u.K, hue: +base.C.toFixed(3), clock: +vt.toFixed(2), to: palette.to.a.concat(palette.to.d).map(v => +v.toFixed(3)),
       cur: palette.cur.a.concat(palette.cur.d).map(v => +v.toFixed(3)), art: follower ? followArt : artUrl,
     }),
     // the centre pixel as it is composited, alpha included (self-test: 0 alpha means the desktop shows through)

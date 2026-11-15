@@ -644,4 +644,62 @@ vec3 scene(vec2 p){
   c += vec3(1)*NOTE*smoothstep(.07,0.,abs(h-MEL))*smoothstep(0.,.1,edge)*.9;   // the melody's own cells flash
   return c*.8;
 }` },
+  // ------------------------------------------------------------ 24
+  { name: 'Julia Bloom V2', blurb: 'Julia Bloom that comes apart and rejoins as something new every time', res: .7, fb: { zoom: .3 }, glsl: `
+// The shape the pieces rejoin as, drawn at random for each cycle.
+void jshape(float k, out float n, out float sg, out float mir, out float fo, out float ro){
+  float blk = floor(k/4.), i = mod(k,4.);
+  float m = hash1(blk*3.1+.7) < .5 ? 1. : 3., o = floor(hash1(blk*5.3+1.9)*4.);
+  n = 2.+mod(i*m+o, 4.);                                   // two to five arms, a different count each time
+  sg = hash1(k*7.7+2.3) < .35 ? -1. : 1.;                  // sometimes the mirrored-angle cousin, which has one more corner
+  mir = hash1(k*4.3+5.1) < .3 ? 1. : 0.;                   // sometimes folded down the middle: skulls, masks, moths
+  fo = hash1(k*9.1+3.3) < .35 ? .12+.2*hash1(k*2.9+8.) : 0.;   // sometimes the fractal itself folds and grows limbs
+  ro = hash1(k*1.7+4.)*TAU;
+}
+// The brink for a shape: the parameter where it is just about to come apart (for two arms, the edge of the cardioid).
+vec2 jedge(float n, float sg, float t){
+  float rho = pow(n, -1./(n-1.));
+  return rho*vec2(cos(t),sin(t)) - pow(rho,n)*vec2(cos(sg*n*t), sin(sg*n*t));
+}
+vec3 scene(vec2 p){
+  // every sixteen beats the pieces drift apart, and what they rejoin as is something else
+  float cyc = BT/16., k = floor(cyc), s = smoothstep(.8,1.,fract(cyc));
+  float n1,g1,m1,f1,r1, n2,g2,m2,f2,r2;
+  jshape(k,n1,g1,m1,f1,r1); jshape(k+1.,n2,g2,m2,f2,r2);
+  float sep = 4.*s*(1.-s);                                 // furthest apart in the middle of the change
+  float mir = mix(m1,m2,s), fo = mix(f1,f2,s), deg = mix(n1,n2,s);
+  p.x = mix(p.x, abs(p.x), mir);
+  p = rot(T*.03+mix(r1,r2,s))*p*(2.5-.35*B-.3*KICK) + mir*vec2(.3*sin(T*.031), .1*cos(T*.027));
+  // the melody walks the parameter along the brink, as in Julia Bloom: every pitch is its own shape,
+  // and each new note pushes it over the edge for a moment
+  float a = T*.05 + 1. + 2.6*(MEL-.5)*MELV + .25*M + .08*sin(BAR*TAU);
+  vec2 c = mix(jedge(n1,g1,a), jedge(n2,g2,a), s)*(1.012+.035*NOTE+.4*sep+.8*fo);
+  float trap = .45+.35*spec(MELX);
+  vec2 z = p; float n = 0., tr = 1e3, ins = 1e3, d2 = dot(z,z);
+  for(int i=0;i<48;i++){
+    z.x = mix(z.x, abs(z.x), fo);
+    float lr = .5*log(d2+1e-12), th = atan(z.y, z.x+1e-9);
+    vec2 zn = exp(n1*lr)*vec2(cos(g1*n1*th), sin(g1*n1*th));
+    if(s>0.) zn = mix(zn, exp(n2*lr)*vec2(cos(g2*n2*th), sin(g2*n2*th)), s);
+    z = zn + c;
+    d2 = dot(z,z);
+    tr = min(tr, abs(sqrt(d2)-trap));
+    ins = min(ins, d2);
+    if(d2>16.) break;
+    n++;
+  }
+  vec3 col = vec3(0);
+  if(n<47.){
+    float sm = n - log(max(log(d2),1e-3))/log(deg) + 4.;
+    col = pal(sm*.04+T*.05+C)*pow(clamp(sm/28.,0.,1.),1.6)*1.6;
+    col *= .75+1.1*spec(.125+abs(fract(sm*.05)-.5));     // the escape bands light with the notes
+    col += vec3(1)*smoothstep(.5,0.,abs(fract(sm*.25-BT*.5)-.5))*.15*(SNARE+.6*NOTE);
+  } else {
+    // where a shape has filled in: pooled colour, marbled, darker the deeper it sits
+    float m = sqrt(ins), pool = fbm3(p*4.+m*3.+vec2(0.,T*.05));
+    col = pal(m*2.+pool+C+.35)*pool*pool*(.5+.9*B+.6*NOTE)*smoothstep(0.,.6,m);
+  }
+  col += pal(tr*2.+C+.5)*.0025/(tr+.01)*(.3+1.2*B+.8*NOTE);
+  return col*.7;
+}` },
 ];

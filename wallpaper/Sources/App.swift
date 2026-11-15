@@ -29,6 +29,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var testPaletteMode: Int?                    // self-test: use this palette mode without touching the saved one
     /// The palette setting: a pinned palette's index, -1 to change with the scenes, -2 to change every so often.
     private var paletteMode: Int { testPaletteMode ?? defaults.integer(forKey: "palette") }
+    private var testScene: Int?                          // self-test: start on this scene instead of a random one
     private var testSkips = 0                            // self-test: press the skip button this many times
     private var pendingRandom = false                    // music just started: pick a fresh scene and palette once the engine is up
 
@@ -69,6 +70,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             else if a == "--test-ignore-cover" { ignoreCover = true }
             else if a == "--test-skips", !args.isEmpty { testSkips = Int(args.removeFirst()) ?? 0 }
             else if a == "--test-palette-mode", !args.isEmpty { testPaletteMode = Int(args.removeFirst()) }
+            else if a == "--test-scene", !args.isEmpty { testScene = Int(args.removeFirst()) }
             else if a == "--test-palette-every", !args.isEmpty { testPaletteEvery = Double(args.removeFirst()) ?? 0 }
             else if a == "--test-audio", !args.isEmpty { testAudio = Self.decode(args.removeFirst(), rate: &testRate); testEnd = testAudio.count }
             else if a == "--test-seconds", !args.isEmpty { testEnd = min(testAudio.count, Int((Double(args.removeFirst()) ?? 10) * testRate)) }
@@ -273,6 +275,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private func randomStartIfDue() {
         guard pendingRandom, !sceneNames.isEmpty, !paletteNames.isEmpty else { return }
         pendingRandom = false
+        if let s = testScene { scene = s; leader?.js("phospheneHost.setScene(\(s))"); return }
         guard defaults.bool(forKey: "randomStart") else { return }
         var s = Int.random(in: 0..<sceneNames.count), p = Int.random(in: 0..<paletteNames.count)
         if sceneNames.count > 1 { while s == scene { s = Int.random(in: 0..<sceneNames.count) } }

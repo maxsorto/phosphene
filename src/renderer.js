@@ -10,13 +10,14 @@ import { LS } from './tones.js';
 const F1 = ['T', 'B', 'M', 'H', 'BEAT', 'K', 'Z', 'C', 'TR', 'KICK', 'SNARE', 'HAT', 'PH', 'BAR', 'BT', 'BPM', 'EN', 'DROP', 'BP',
   'GOO', 'IRID', 'ARTC', 'MEL', 'NOTE', 'MELV', 'MELH', 'TONE', 'SP', 'ARM'];
 const F3 = ['PA', 'PB', 'PF', 'PD'];
-const SAMPLERS = ['P', 'F', 'ECG', 'W', 'SG', 'ART', 'CH'];
+const SAMPLERS = ['P', 'F', 'ECG', 'W', 'SG', 'ART', 'CH', 'BG'];
 const SG_ROWS = 256, SG_W = 256, SG_INTERVAL = 1 / 30, HIST_AT = 224;
 
 export class Renderer {
-  constructor(canvas, { mobile = false } = {}) {
+  constructor(canvas, { mobile = false, transparent = false } = {}) {
     this.canvas = canvas;
-    const gl = canvas.getContext('webgl2', { antialias: false, alpha: false, powerPreference: 'high-performance' });
+    // (the desktop wallpaper needs a canvas the real desktop can show through)
+    const gl = canvas.getContext('webgl2', { antialias: false, alpha: transparent, premultipliedAlpha: true, powerPreference: 'high-performance' });
     if (!gl) throw new Error('WebGL2 is not available in this browser.');
     this.gl = gl;
     this.mobile = mobile;
@@ -46,6 +47,7 @@ export class Renderer {
     this.sgTex = this.tex(gl.R8, SG_W, SG_ROWS, gl.RED, gl.UNSIGNED_BYTE, true);
     this.ecgTex = this.tex(gl.R16F, 256, 64, gl.RED, gl.FLOAT);
     this.artTex = this.tex(gl.RGBA8, 4, 4, gl.RGBA, gl.UNSIGNED_BYTE);
+    this.bgTex = this.tex(gl.RGBA8, 4, 4, gl.RGBA, gl.UNSIGNED_BYTE); this.bgAspect = 0;
     this.sgRow = new Uint8Array(SG_W);
     this.hasArt = 0; this.ecgHead = 0; this.sgHead = 0; this.sgLast = 0;
 
@@ -176,6 +178,18 @@ export class Renderer {
     this.hasArt = 1;
   }
 
+  // The desktop wallpaper the picture blends with (wallpaper app only).
+  setBackdrop(img) {
+    const gl = this.gl;
+    gl.bindTexture(gl.TEXTURE_2D, this.bgTex);
+    if (!img) { gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, 4, 4, 0, gl.RGBA, gl.UNSIGNED_BYTE, null); this.bgAspect = 0; return; }
+    gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, gl.RGBA, gl.UNSIGNED_BYTE, img);
+    gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
+    this.texParams();
+    this.bgAspect = img.naturalWidth / img.naturalHeight;
+  }
+
   uniforms(u, s, w, h) {
     const gl = this.gl;
     if (u.R) gl.uniform2f(u.R, w, h);
@@ -183,13 +197,16 @@ export class Renderer {
     for (const k of F3) if (u[k]) gl.uniform3fv(u[k], s[k]);
     SAMPLERS.forEach((k, i) => { if (u[k]) gl.uniform1i(u[k], i); });
     if (u.HASART) gl.uniform1f(u.HASART, this.hasArt);
+    if (u.BGA) gl.uniform1f(u.BGA, s.BGA || 0);
+    if (u.BGM) gl.uniform1f(u.BGM, this.bgAspect ? 1 : 0);
+    if (u.BGS) { const a = w / h, b = this.bgAspect || a; gl.uniform2f(u.BGS, b > a ? a / b : 1, b > a ? 1 : b / a); }   // fill the screen, cropping the overflow
     if (u.HEAD) gl.uniform1f(u.HEAD, this.ecgHead);
     if (u.SGH) gl.uniform1f(u.SGH, this.sgHead);
     if (u.SGF) gl.uniform1f(u.SGF, Math.min(1, Math.max(0, (s.T - this.sgLast) / SG_INTERVAL)));
   }
 
   bindAll(src) {
-    const gl = this.gl, T = [src, this.specTex, this.ecgTex, this.waveTex, this.sgTex, this.artTex, this.chromaTex];
+    const gl = this.gl, T = [src, this.specTex, this.ecgTex, this.waveTex, this.sgTex, this.artTex, this.chromaTex, this.bgTex];
     T.forEach((t, i) => { gl.activeTexture(gl.TEXTURE0 + i); gl.bindTexture(gl.TEXTURE_2D, t); });
     gl.activeTexture(gl.TEXTURE0);
   }
@@ -244,8 +261,7 @@ export class Renderer {
       gl.disable(gl.BLEND);
     }
 
-    gl.activeTexture(gl.TEXTURE0);
-    gl.bindTexture(gl.TEXTURE_2D, dst.t);
+    this.bindAll(dst.t);
     gl.generateMipmap(gl.TEXTURE_2D);                    // the display pass blooms and meters from the mips
     gl.useProgram(this.display.p); this.uniforms(this.display.u, state, this.CW, this.CH);
     gl.bindFramebuffer(gl.FRAMEBUFFER, null); gl.viewport(0, 0, this.CW, this.CH);

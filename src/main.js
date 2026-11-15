@@ -9,6 +9,14 @@ const $ = id => document.getElementById(id);
 const body = document.body;
 const params = new URLSearchParams(location.search);
 const mobile = matchMedia('(pointer: coarse)').matches;
+// As a desktop wallpaper (the Mac app loads this page with ?wallpaper) a native host
+// pushes the audio in and drives everything through window.phospheneHost.
+const wallpaper = params.has('wallpaper');
+function post(msg) { try { window.webkit.messageHandlers.phosphene.postMessage(msg); } catch {} }
+if (wallpaper) {                                              // the host has no console: send it the engine's errors
+  addEventListener('error', e => post({ type: 'error', message: String(e.message) + ' @ ' + String(e.filename).split('/').pop() + ':' + e.lineno }));
+  addEventListener('unhandledrejection', e => post({ type: 'error', message: 'promise: ' + String(e.reason && e.reason.message || e.reason) }));
+}
 const store = {
   get: (k, d) => { try { const v = localStorage.getItem('phosphene.' + k); return v === null ? d : JSON.parse(v); } catch { return d; } },
   set: (k, v) => { try { localStorage.setItem('phosphene.' + k, JSON.stringify(v)); } catch {} },
@@ -17,7 +25,7 @@ const store = {
 // ---------- Core ----------
 let renderer;
 try {
-  renderer = new Renderer($('gl'), { mobile });
+  renderer = new Renderer($('gl'), { mobile, transparent: wallpaper });
 } catch (e) {
   $('fatal').style.display = 'grid';
   $('fatal').textContent = 'Phosphene needs WebGL2. Try a recent Chrome, Edge, Arc or Safari. (' + e.message + ')';
@@ -32,7 +40,7 @@ const u = {
   T: 0, B: 0, M: 0, H: 0, BEAT: 0, K: 8, Z: 0, C: 0, TR: 0.78,
   KICK: 0, SNARE: 0, HAT: 0, PH: 0, BAR: 0, BT: 0, BPM: 0, EN: 0, DROP: 0, BP: 0,
   MEL: 0.5, NOTE: 0, MELV: 0, MELH: 0, TONE: 0, SP: 0, ARM: 0,
-  GOO: 0.5, IRID: 0.4, ARTC: 0, PA: [0.5, 0.5, 0.5], PB: [0.5, 0.5, 0.5], PF: [1, 1, 1], PD: [0, 0.33, 0.67],
+  GOO: 0.5, IRID: 0.4, ARTC: 0, BGA: 0, PA: [0.5, 0.5, 0.5], PB: [0.5, 0.5, 0.5], PF: [1, 1, 1], PD: [0, 0.33, 0.67],
   hist: new Float32Array(8), scene: 0,
 };
 // The palette offset the scenes see is this base plus a lean from the melody.
@@ -117,6 +125,7 @@ function setScene(i, { quiet = false } = {}) {
   body.classList.toggle('scene-monitor', !!SCENES[u.scene].monitor);
   renderer.prewarm((u.scene + 1) % SCENES.length);
   if (!quiet) toast(num(u.scene) + '   ' + SCENES[u.scene].name, SCENES[u.scene].blurb);
+  if (wallpaper) post({ type: 'scene', index: u.scene });
 }
 function nextLook() {
   setScene(u.scene + 1);
@@ -171,6 +180,7 @@ const SOURCE_TEXT = {
   demo: ['Demo beat', 'Built-in and silent'],
   tab:  ['Browser tab', 'Live, straight from the source'],
   mic:  ['Microphone', 'Listening out loud'],
+  native: ['This Mac', 'Whatever is playing'],
 };
 let song = null;
 function musicLine() {
@@ -410,17 +420,46 @@ addEventListener('keydown', e => {
 // ---------- Frame loop ----------
 const bars = [...document.querySelectorAll('.eq i')];
 let monT = 0;
-function frame() {
-  const now = performance.now() / 1000, dt = Math.min(0.1, now - last); last = now;
+// The loop. It can be paused (the wallpaper sleeps while nothing plays) and capped
+// to a frame rate; the scenes' clock can run slow (the wallpaper idles when asked
+// to stay on through silence).
+let paused = false, loopOn = false, frameGap = 0, lastDraw = 0, fpsCap = 60, fpsNow = 60;
+let vt = performance.now() / 1000, calm = 1;
+let veil = wallpaper ? 1 : 0, veilTo = veil, veilDur = 3.5, hasBackdrop = false;   // how much of the desktop wallpaper shows
+function tick() {
+  if (paused) { loopOn = false; return; }
+  requestAnimationFrame(tick);
+  const now = performance.now() / 1000;
+  if (now - lastDraw < frameGap - 0.003) return;
+  lastDraw = now;
+  frame(now);
+}
+function startLoop() { if (!loopOn) { loopOn = true; last = performance.now() / 1000; requestAnimationFrame(tick); } }
+function frame(now) {
+  const dt = Math.min(0.1, now - last); last = now;
   audio.update(now, dt);
   const L = audio.level, f = F();
+  let rate = 1;
+  if (wallpaper) {
+    const playing = !(f.quiet && f.quietFor > 2.5);
+    calm += ((playing ? 1 : 0) - calm) * Math.min(1, dt * (playing ? 3 : 0.5));
+    rate = 0.12 + 0.88 * calm;                                // nothing playing: the scene drifts at an eighth of its pace
+    frameGap = calm > 0.03 ? 1 / fpsCap : 1 / 20;
+    fpsNow += (1 / Math.max(dt, 1e-3) - fpsNow) * 0.05;
+    if (veil !== veilTo) {
+      const step = dt / veilDur; veil = veilTo > veil ? Math.min(veilTo, veil + step) : Math.max(veilTo, veil - step);
+      if (veil === 1) post({ type: 'asleep' });               // fully back to the wallpaper: the host hides the window
+    }
+    u.BGA = veil * veil * (3 - 2 * veil);
+  }
+  vt += dt * rate;
   // palette eases toward the album's colours, hue toward the key
   const k = Math.min(1, dt * 1.5);
   for (const part of 'abfd') for (let i = 0; i < 3; i++) palette.cur[part][i] += (palette.to[part][i] - palette.cur[part][i]) * k;
   if (cTarget !== null) { let d = (cTarget - base.C) % 1; if (d > 0.5) d -= 1; if (d < -0.5) d += 1; base.C += d * Math.min(1, dt * 0.4); }
 
   Object.assign(u, {
-    T: now, B: L.b, M: L.m, H: L.h, BEAT: Math.max(L.beat, f.kick), TR: 0.62 + 0.4 * trailsSetting,
+    T: vt, B: L.b, M: L.m, H: L.h, BEAT: Math.max(L.beat, f.kick), TR: 0.62 + 0.4 * trailsSetting,
     KICK: f.kick, SNARE: f.snare, HAT: f.hat, PH: f.phase, BAR: f.bar, BPM: f.bpm, EN: f.energy, DROP: f.drop, BP: f.beatPulse,
     GOO: gooSetting, IRID: 0.25 + 0.6 * gooSetting,
     PA: palette.cur.a, PB: palette.cur.b, PF: palette.cur.f, PD: palette.cur.d,
@@ -432,10 +471,10 @@ function frame() {
   u.C = base.C + 0.4 * lean * m.conf;                        // a rising tune slides the palette one way, a falling one the other
   const hh = u.hist; hh[0] = m.mel; hh[1] = m.conf; hh[2] = f.energy; hh[3] = f.locked ? (Math.exp(-f.phase * 3.5) + 0.25 * Math.exp(-(((f.phase - 0.42) / 0.12) ** 2))) * (0.35 + 0.65 * Math.min(1, L.b)) : L.b / 1.5; hh[4] = f.kick / 1.5; hh[5] = m.note; hh[6] = L.m / 1.5; hh[7] = L.h / 1.5;
   const ph = f.phase;
-  u.BT = f.bpm ? f.beatNo + ph * ph * (3 - 2 * ph) : u.BT + dt * 2;
-  u.Z += dt * (0.35 + L.b * 1.6);
-  u.SP = (u.SP + dt * 3.49 * (1 - 2.4 * f.drop)) % 6283.1853;       // 33 1/3 rpm; a drop spins the record back
-  if (auto && now - sceneStart > 90) setScene(u.scene + 1);   // keep moving through quiet passages
+  u.BT = f.bpm ? f.beatNo + ph * ph * (3 - 2 * ph) : u.BT + dt * 2 * rate;
+  u.Z += dt * rate * (0.35 + L.b * 1.6);
+  u.SP = (u.SP + dt * rate * 3.49 * (1 - 2.4 * f.drop)) % 6283.1853;       // 33 1/3 rpm; a drop spins the record back
+  if (auto && now - sceneStart > (calm < 0.5 ? 600 : 90)) setScene(u.scene + 1);   // keep moving through quiet passages
   renderer.adapt(dt, now);
   ecg.update(now, dt, L.m);
   renderer.render(audio, u, ecg);
@@ -460,7 +499,60 @@ function frame() {
     const v = [L.b, L.m, (L.m + L.h) / 2, L.h];
     bars.forEach((b, i) => { b.style.height = (18 + Math.min(1, v[i]) * 82) + '%'; });
   }
-  requestAnimationFrame(frame);
+}
+
+// ---------- Wallpaper host ----------
+if (wallpaper) {
+  const setting = {
+    goo: v => { gooSetting = +v; }, melody: v => { melodySetting = +v; }, trails: v => { trailsSetting = +v; },
+    sensitivity: v => { audio.sensitivity = +v; }, fps: v => { fpsCap = +v || 60; }, quality: v => renderer.setQuality(String(v)),
+    opacity: v => { $('gl').style.opacity = +v; },             // below 1 the desktop shows through the picture
+    songid: v => { if (!!v !== songId.enabled) setSongId(!!v); },
+    card: v => body.classList.toggle('np-on', !!v),
+    stayOn: v => { if (v) { veil = veilTo = 0; } },           // keep drawing through silence instead of handing back to the wallpaper
+  };
+  window.phospheneHost = {
+    info: () => ({ scenes: SCENES.map(s => s.name), palettes: PALETTES.map(p => p.name) }),
+    // 16-bit mono samples, base64: the audio the Mac is playing
+    pcm(b64, rate) {
+      if (rate !== audio.tapRate || audio.source !== 'native') audio.useNative(rate);
+      const bin = atob(b64), n = bin.length >> 1, out = new Float32Array(n);
+      for (let i = 0; i < n; i++) { let v = bin.charCodeAt(2 * i) | (bin.charCodeAt(2 * i + 1) << 8); if (v & 0x8000) v -= 0x10000; out[i] = v / 32768; }
+      audio.pushPCM(out);
+    },
+    set(key, value) { if (setting[key]) setting[key](value); },
+    setScene: i => setScene(i, { quiet: true }),
+    next: () => nextLook(),
+    setAuto: on => setAuto(!!on),
+    setPalette: i => setPreset(i, false),
+    // optional: a copy of the user's wallpaper image for this screen, to liquefy it instead of dissolving through it
+    backdrop(url) {
+      if (!url) { hasBackdrop = false; renderer.setBackdrop(null); return; }
+      const img = new Image();
+      img.onload = () => { renderer.setBackdrop(img); hasBackdrop = true; };
+      img.onerror = () => { hasBackdrop = false; };
+      img.src = url;
+    },
+    // music started: wake up and melt in.  music stopped: melt back, then report asleep.
+    wake(seconds = 3.5) { paused = false; veilTo = 0; veilDur = seconds; startLoop(); },
+    sleep(seconds = 3) { veilTo = 1; veilDur = seconds; if (paused || veil === 1) { veil = 1; post({ type: 'asleep' }); } },
+    setPaused(p) { paused = !!p; if (!paused) startLoop(); },
+    state: () => ({
+      scene: u.scene, auto, palette: presetIx, paused, veil: +veil.toFixed(2), calm: +calm.toFixed(2), quiet: F().quiet,
+      rms: +(audio.rms || 0).toFixed(4), bpm: Math.round(F().bpm), note: audio.tones.m.name, songState: songId.state,
+      song: song ? song.title + ' / ' + song.artist : null, fps: Math.round(fpsNow), size: [renderer.W, renderer.H],
+      canvas: [renderer.CW, renderer.CH], backdrop: hasBackdrop, err: renderer.lastError || null,
+    }),
+    // the centre pixel as it is composited, alpha included (self-test: 0 alpha means the desktop shows through)
+    pixel() {
+      if (paused) return null;
+      const gl = renderer.gl, px = new Uint8Array(4);
+      renderer.render(audio, u, ecg); gl.readPixels(renderer.CW >> 1, renderer.CH >> 1, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, px);
+      return [...px];
+    },
+    // one frame as a JPEG data URL (the host's self-test)
+    grab() { renderer.render(audio, u, ecg); return $('gl').toDataURL('image/jpeg', 0.85); },
+  };
 }
 
 // ---------- Boot ----------
@@ -468,7 +560,15 @@ const qScene = parseInt(params.get('scene'), 10);
 setScene(qScene >= 1 && qScene <= SCENES.length ? qScene - 1 : 0, { quiet: true });
 setAuto(auto);
 updateNow();
-if (params.get('ui') === '0') { body.classList.add('clean'); hiddenByUser = true; dock.classList.add('hidden'); }
+if (wallpaper) {
+  body.classList.add('clean', 'wallpaper'); hiddenByUser = true; dock.classList.add('hidden');
+  document.documentElement.style.background = body.style.background = 'transparent';
+  audio.useNative(48000); onSourceChanged();
+  paused = true;                                             // asleep until the host hears music
+  frame(performance.now() / 1000);                           // one frame now, so the first scene is compiled before it is needed
+  post({ type: 'ready', ...window.phospheneHost.info() });
+}
+else if (params.get('ui') === '0') { body.classList.add('clean'); hiddenByUser = true; dock.classList.add('hidden'); }
 else if (params.has('demo') || params.has('scene')) enter();
 else body.classList.add('welcome');
 // Development host (dev.html): reuse the tab audio the outer page is already capturing.
@@ -476,4 +576,4 @@ try {
   const shared = parent !== window && parent.__phospheneStream;
   if (shared) audio.useStream(shared, 'tab').then(() => { onSourceChanged(); enter(); });
 } catch {}
-requestAnimationFrame(frame);
+startLoop();

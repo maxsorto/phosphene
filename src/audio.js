@@ -6,8 +6,11 @@
 //   features: tempo, phase, bars, onsets, key, energy (see features.js)
 //   tones: log-frequency spectrum, chroma and the tracked melody (see tones.js)
 //   tap   the last 15 s of raw audio, for song recognition fingerprints
+// A native host (the desktop wallpaper app) can instead push raw samples in with
+// useNative() and pushPCM(); they are analysed here without a Web Audio graph.
 import { Features } from './features.js';
 import { Tones } from './tones.js';
+import { Spectrum } from './spectrum.js';
 
 const CLEAN = { echoCancellation: false, noiseSuppression: false, autoGainControl: false };
 const ANA_FFT = 4096, TAP_SECONDS = 15;
@@ -35,7 +38,7 @@ export class AudioEngine {
     this.el = audioEl;
     this.wave = new Uint8Array(1024).fill(128);
     this.db = new Float32Array(ANA_FFT / 2).fill(-100);
-    this.source = 'demo';              // 'demo' | 'tab' | 'mic' | 'file'
+    this.source = 'demo';              // 'demo' | 'tab' | 'mic' | 'file' | 'native'
     this.sensitivity = 1;
     this.level = { b: 0, m: 0, h: 0, beat: 0 };
     this.peak = { b: 1e-5, m: 1e-5, h: 1e-5 }; this.smooth = { b: 0, m: 0, h: 0 };
@@ -119,7 +122,7 @@ export class AudioEngine {
     if (this.node) { this.node.disconnect(); this.node = null; }
     if (this.stream) { this.stream.getTracks().forEach(t => t.stop()); this.stream = null; }
     if (this.elSrc) this.elSrc.disconnect();
-    this.el.pause();
+    if (this.el.pause) this.el.pause();
     this.tapFilled = 0; this.tapHead = 0;
   }
 
@@ -164,6 +167,29 @@ export class AudioEngine {
   }
 
   useDemo() { this.stop(); this.source = 'demo'; }
+
+  // A native host pushes mono samples in. The tap ring doubles as the analysis buffer.
+  useNative(rate = 48000) {
+    this.stop();
+    if (!this.spectrum || this.tapRate !== rate) {
+      this.tapRate = rate;
+      const pf = this.features; this.features = new Features(rate, ANA_FFT);
+      for (const k of ['onBeat', 'onDrop', 'onKey', 'onTempoChange', 'onGap', 'onGrid']) this.features[k] = pf[k];
+      const pt = this.tones; this.tones = new Tones(rate, ANA_FFT); this.tones.onNote = pt.onNote;
+      this.tap = new Float32Array(Math.round(rate * TAP_SECONDS)); this.tapHead = 0; this.tapFilled = 0;
+      this.spectrum = new Spectrum(ANA_FFT, 0.2); this.frame = new Float32Array(ANA_FFT);
+    }
+    this.features.resetLevel(); this.lastPush = 0;
+    this.source = 'native';
+  }
+  pushPCM(chunk) { this.pushTap(chunk); this.lastPush = performance.now() / 1000; }
+  // the most recent `out.length` samples (zeros before the ring has filled)
+  latest(out) {
+    const t = this.tap, n = out.length, have = Math.min(n, this.tapFilled);
+    out.fill(0, 0, n - have);
+    let at = (this.tapHead - have + t.length) % t.length;
+    for (let i = n - have; i < n; i++) { out[i] = t[at]; if (++at === t.length) at = 0; }
+  }
 
   // A silent 124 BPM groove, built straight in the frequency domain: kick, snare and
   // hats, plus a bass line, a pad and an arpeggiated lead over Am F C G, so the
@@ -219,7 +245,13 @@ export class AudioEngine {
 
   update(now, dt) {
     if (this.source === 'demo') this.demoSpectrum(now);
-    else {
+    else if (this.source === 'native') {
+      // nothing arriving means the host has gone quiet: let the signal fall to silence
+      if (now - this.lastPush > 0.12) this.pushTap(new Float32Array(Math.min(4096, Math.round(dt * this.tapRate))));
+      const fr = this.frame; this.latest(fr);
+      for (let i = 0; i < 1024; i++) this.wave[i] = Math.max(0, Math.min(255, 128 + fr[ANA_FFT - 1024 + i] * 128));
+      this.spectrum.run(fr, this.db);
+    } else {
       this.vis.getByteTimeDomainData(this.wave);
       this.ana.getFloatFrequencyData(this.db);
     }

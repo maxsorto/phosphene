@@ -221,6 +221,26 @@ GPU time per frame at 1600 x 900 on an M2 Max, v2 against v3 measured back to ba
 
 Where it came from: the display pass reads mips instead of 27 taps a pixel; the feedback flow uses noise with an analytic gradient instead of twelve noise lookups; Pulsar only visits the few ridgelines that can reach a pixel; Scope's beam is geometry instead of a 96-segment distance loop; Aurora and Gyroid march fewer, dithered steps into smaller buffers. Vitals and Vinyl do more than before and cost a little more.
 
+## The desktop wallpaper (Mac)
+
+`wallpaper/` is a small native Mac app that runs the same engine as your desktop wallpaper. It is separate from the website and is not deployed anywhere: you build it and run it on your own Mac.
+
+- **Your wallpaper stays your wallpaper.** While nothing plays, the app is invisible and asleep, and costs nothing. When music starts, the visualizer burns through your desktop (the window is genuinely transparent, so it works over any wallpaper, even a video one) and melts back a few seconds after the music stops. Desktop icons stay on top.
+- **It hears the Mac directly.** No microphone, no tab sharing: it taps what the Mac is playing, either everything or one app (Spotify, Music, a browser), chosen from the menu bar. This is the "capture the desktop apps directly" item that used to be on the roadmap.
+- **Menu bar controls.** What to listen to, scene (or change with the music), palette, opacity, goo and melody, what to do when the music stops (show my wallpaper, or keep drifting slowly), frame rate, which displays, Song ID, open at login.
+- **It stays out of the way.** It pauses when the desktop is covered by a full-screen app, when the displays sleep and when the screen is locked, and drops to 20 frames a second in silence if you ask it to stay on.
+
+```sh
+cd wallpaper
+./build.sh --run
+```
+
+That needs Xcode's command line tools and macOS 14.2 or later. The first time it listens, macOS asks to let it record system audio: that is the permission for hearing what the Mac plays. Nothing is recorded; the samples are analysed in memory, and with Song ID on, only the usual fingerprint leaves the Mac. The app is signed ad hoc, so macOS asks again after each rebuild. To keep it, drag `wallpaper/build/Phosphene Wallpaper.app` to Applications and turn on "Open at login" in its menu.
+
+To test it without touching the audio permission, `Phosphene Wallpaper.app/Contents/MacOS/PhospheneWallpaper --test-audio song.m4a --test-seconds 10 --status-file status.json` feeds a file through the same path and writes what the app and the engine are doing once a second.
+
+How it works: a borderless, click-through window at desktop level (above the wallpaper, below the icons) on each display holds a transparent `WKWebView`, which loads the engine from the app bundle with `?wallpaper`. WebKit draws WebGL through Metal, so the shaders run on the same GPU path a hand-written Metal port would use. Audio comes from a Core Audio process tap, is mixed to mono in Swift and pushed to the page sixty times a second, where `src/spectrum.js` (a JavaScript FFT that matches the Web Audio analyser) feeds the same ears as the website. Swift decides when music is playing (most of a second of sound to wake, four seconds of silence to sleep, so a notification ping does not count) and tells the engine to melt in or out; the engine's display pass does the dissolve and writes a transparent canvas where the desktop should show. Song ID and album art are relayed through the website's two functions.
+
 ## Run it locally
 
 ```sh
@@ -237,12 +257,9 @@ Deploying is just Vercel: `vercel --prod` from the repo root, no settings needed
 
 ## What's next
 
-The native Mac app is still the plan for v3:
-- **Capture the Spotify and Apple Music desktop apps directly** with ScreenCaptureKit or Core Audio process taps. No BlackHole, no changing your output device, no mic.
-- **Menu bar app with a borderless fullscreen window** for a second display or a projector.
-- **Syphon and NDI output** so VJ tools (Resolume, VDMX, OBS) can take the visuals as a video source.
-
-Also planned: preset sharing by link, clip recording (canvas capture to video), MIDI and OSC control for live sets, and lyrics-aware moments once the song is named.
+- **Liquify.** The engine can already draw a copy of the wallpaper image and push it around as the visualizer takes over; the app does not use it yet because macOS does not reliably say which image is on the desktop.
+- **Syphon and NDI output** from the Mac app, so VJ tools (Resolume, VDMX, OBS) can take the visuals as a video source.
+- Preset sharing by link, clip recording (canvas capture to video), MIDI and OSC control for live sets, and lyrics-aware moments once the song is named.
 
 Pull requests are welcome. A new scene is one entry in `src/scenes.js`: a name, a blurb, a `vec3 scene(vec2 p)` function and optionally its feedback settings.
 
@@ -265,6 +282,7 @@ v3 (this: the melodic ear and a melody-driven rewrite of every scene, rebuilt Au
 - `src/features.js` the rhythmic ear: onsets, tempo, beat phase, bars, drops, key
 - `src/shazam.js` the recognition fingerprint (also runs in Node)
 - `src/songid.js` and `src/songid-worker.js` the Song ID state machine and off-thread fingerprinting
+- `src/spectrum.js` a JavaScript spectrum analyser, for audio pushed in by the Mac app
 - `src/palette.js` palette presets and album art to palette
 - `src/ecg.js` the heartbeat waveform and its ring buffer
 - `src/main.js` UI, controls, gestures, URL options and the frame loop
@@ -272,6 +290,7 @@ v3 (this: the melodic ear and a melody-driven rewrite of every scene, rebuilt Au
 - `api/recognize.js` and `api/art.js` the Vercel functions
 - `serve.mjs` local server with the API functions, no dependencies
 - `dev.html` development host that keeps a shared tab's audio across reloads
+- `wallpaper/` the Mac desktop wallpaper app: `Sources/App.swift` (menu bar, when to wake and sleep), `Engine.swift` (the desktop window and web view), `AudioTap.swift` (hearing the Mac), `build.sh`
 - `docs/` README images, the diagram and the cover art source (`docs/cover/cover.html`)
 
 ## License

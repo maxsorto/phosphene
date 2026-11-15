@@ -107,7 +107,13 @@ const f = n => Number(n).toFixed(3);
 
 // The display pass reads the frame's mip chain: level 0 for the picture, the
 // middle levels for clarity and bloom, the top (1 x 1) level for exposure.
+// As a desktop wallpaper it also blends with the user's own wallpaper. BGA is how
+// much of that shows, from 1 (only the wallpaper) to 0 (only the picture). By
+// default the canvas simply goes transparent there, so the real desktop shows
+// through, whatever it is. With BGM set, a copy of the wallpaper image (BG) is
+// drawn instead and pushed around as it gives way, so it seems to liquefy.
 export const DISPLAY_FS = COMMON + `
+uniform sampler2D BG; uniform float BGA, BGM; uniform vec2 BGS;
 void main(){
   vec2 uv = gl_FragCoord.xy/R;
   vec2 cc = uv-.5; float r2 = dot(cc,cc);
@@ -127,7 +133,21 @@ void main(){
   c = c*c*(3.-2.*c);
   c += (hash(gl_FragCoord.xy+fract(T))-.5)*.03;                          // grain
   c *= mix(.35,1.,smoothstep(1.1,.3,length(uv-.5)));
-  o = vec4(c,1.);
+  float cover = 1.;
+  if(BGA > .001){                                         // the desktop wallpaper, giving way to the picture or coming back
+    float m = 1.-BGA;
+    vec2 su = gl_FragCoord.xy/R, sa = su*vec2(R.x/R.y,1.);
+    float th = .55*noise(sa*3.5+T*.07) + .45*dot(c,vec3(.34));   // the bright parts of the picture burn through first
+    float v = smoothstep(BGA*1.3-.3, BGA*1.3, th);
+    vec3 seam = pal(th+C)*v*(1.-v)*.9;                     // a glowing edge where one gives way to the other
+    if(BGM > .5){
+      vec2 flow = curl(sa*2.5+T*.08)*.035 + (c.rg-c.gb)*.12;   // the wallpaper is pushed around by what replaces it
+      c = mix(texture(BG, (su-.5)*BGS+.5 + flow*m*(.3+.7*m)).rgb, c, v) + seam;
+    } else {
+      c = c*v + seam; cover = clamp(v + 3.*v*(1.-v), 0., 1.);   // premultiplied: the real desktop shows through the rest
+    }
+  }
+  o = vec4(c,cover);
 }`;
 
 // Overlay passes: additive points drawn into the feedback buffer after a scene.

@@ -47,7 +47,19 @@ cd wallpaper
 
 That needs Xcode's command line tools and macOS 14.2 or later. The first time it listens, macOS asks to let it record system audio: that is the permission for hearing what the Mac plays. Nothing is recorded; the samples are analysed in memory, and with Song ID on, only the usual fingerprint leaves the Mac. To keep it, drag `wallpaper/build/Phosphene Wallpaper.app` to Applications and turn on "Open at login" in its menu.
 
-To make the download, `./build.sh --release` builds one app for Apple silicon and Intel, signs it ad hoc and zips it to `wallpaper/dist/Phosphene-Wallpaper.zip`; attach that file, under that name, to a GitHub release and the website's download link (which always points at the latest release) picks it up.
+**Updates.** The app updates itself with [Sparkle](https://sparkle-project.org), the standard Mac updater. Once a day it reads the `appcast.xml` attached to the newest GitHub release. When there is a newer version it doesn't interrupt: "Update to 1.2…" appears at the top of the menu and the desktop says so once. Choosing it, or **Check for Updates…** at the bottom of the menu, shows the release notes and installs the update in place, then relaunches. Every update zip is signed with the project's EdDSA key, and the app refuses any download whose signature doesn't match the public key built into it. Releases are signed with the same identity as before, so macOS keeps the audio permission across updates, and an update carries no download quarantine, so the first-open step does not come back.
+
+To ship an update:
+
+```sh
+cd wallpaper
+./release.sh 1.2 notes.md             # build and sign into dist/: the zip and appcast.xml
+./release.sh 1.2 notes.md --publish   # then commit the version, push and publish the GitHub release
+```
+
+`notes.md` is what's new, in Markdown; it is shown in the update window and on the release page. The script sets the version and the next build number in `Info.plist`, builds one app for Apple silicon and Intel, signs it, writes the appcast, and with `--publish` creates release `v1.2` with both files attached. The website's download link always points at the newest release, so it needs no change. Two things must stay on the release Mac and be backed up somewhere safe: the update signing key (`~/Library/Application Support/Phosphene Wallpaper/sparkle-private-key`; without it no installed copy can ever be updated again) and the signing identity from `./setup-signing.sh`.
+
+To try an update locally, `FEED_BASE=http://127.0.0.1:8799 ./release.sh …` points the appcast at a local server, and the app's `--test-feed <url>` reads it (add `--test-install` to install at once without asking).
 
 Run `./setup-signing.sh` once before building if you plan to rebuild. It creates a self-signed signing identity in its own keychain, used only for this app. Without it the app is ad-hoc signed, every rebuild looks like a new app to macOS, and the audio permission is asked for again each time.
 

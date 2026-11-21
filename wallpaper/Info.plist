@@ -13,6 +13,10 @@
   <key>LSMinimumSystemVersion</key><string>14.2</string>
   <key>LSUIElement</key><true/>
   <key>NSHighResolutionCapable</key><true/>
+  <key>SUFeedURL</key><string>https://github.com/maxsorto/phosphene/releases/latest/download/appcast.xml</string>
+  <key>SUPublicEDKey</key><string>DysXdhjh77Uj6bk42jypoPsrlm9ciagQiixVJDRp5bU=</string>
+  <key>SUEnableAutomaticChecks</key><true/>
+  <key>SUScheduledCheckInterval</key><integer>86400</integer>
   <key>NSAudioCaptureUsageDescription</key><string>Phosphene listens to the sound your Mac is playing so the wallpaper can move with the music. It is analysed on this Mac and never recorded.</string>
 </dict>
 </plist>

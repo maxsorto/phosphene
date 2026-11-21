@@ -14,6 +14,8 @@ private let defaults = UserDefaults.standard
 final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var status: NSStatusItem!
     private let menu = NSMenu()
+    private let updates = Updates()
+    private var testFeed: String?, testInstall = false
     private var scheme: EngineScheme!
     private var views: [WallpaperView] = []
     private let tap = AudioTap()
@@ -76,6 +78,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         while !args.isEmpty {
             let a = args.removeFirst()
             if a == "--status-file", !args.isEmpty { statusFile = args.removeFirst() }
+            else if a == "--test-feed", !args.isEmpty { testFeed = args.removeFirst() }
+            else if a == "--test-install" { testInstall = true }
             else if a == "--grab", !args.isEmpty { grabFile = args.removeFirst() }
             else if a == "--grab-after", !args.isEmpty { grabAfter = Double(args.removeFirst()) ?? 8 }
             else if a == "--test-wake" { testWake = true }
@@ -111,6 +115,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         buildViews()
         startAudio()
+        updates.onWaiting = { [weak self] v in self?.announce("Phosphene Wallpaper \(v) is ready. Open the menu to update") }
+        updates.start(testFeed: testFeed, testInstall: testInstall)
 
         every(1.0 / 60) { [weak self] in self?.pump() }
         every(3) { [weak self] in self?.followApp() }
@@ -490,6 +496,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if enabled, source != "off", source != "system", !(apps.contains { $0.bundleID == source }) { state = "Waiting for it to open" }
         if mode == .awake, lookNowName != "music" { state = lookNowName.capitalized + " look" + (pulseText.map { "  ·  " + $0 } ?? "") }
         if let e = tap.lastError { state = e }
+        if let v = updates.waiting {
+            let item = add(menu, "Update to \(v)…", #selector(Updates.check(_:)))
+            item.target = updates
+            item.attributedTitle = NSAttributedString(string: item.title, attributes: [.font: NSFont.menuFont(ofSize: 0).withWeight(.semibold)])
+            menu.addItem(.separator())
+        }
         add(menu, "\(what)  ·  \(state)", enabled: false)
         add(menu, "On", #selector(toggle(_:)), on: enabled, key: "enabled")
         menu.addItem(.separator())
@@ -567,6 +579,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         add(menu, "Open at login", #selector(toggleLogin), on: SMAppService.mainApp.status == .enabled)
         if enabled, source != "off", !everLoud { add(menu, "Never reacts? Check audio permission…", #selector(openPermission)) }
         menu.addItem(.separator())
+        let check = add(menu, "Check for Updates…", #selector(Updates.check(_:)), enabled: updates.canCheck)
+        check.target = updates
+        add(menu, "Version \(updates.version)", enabled: false)
         add(menu, "Quit Phosphene Wallpaper", #selector(quit))
     }
 
@@ -824,5 +839,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             guard let url = value as? String, let comma = url.firstIndex(of: ","), let data = Data(base64Encoded: String(url[url.index(after: comma)...])) else { return }
             try? data.write(to: URL(fileURLWithPath: path))
         }
+    }
+}
+
+private extension NSFont {
+    func withWeight(_ weight: NSFont.Weight) -> NSFont {
+        NSFont.systemFont(ofSize: pointSize, weight: weight)
     }
 }

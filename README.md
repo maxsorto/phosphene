@@ -2,7 +2,7 @@
 
 # phosphene
 
-A psychedelic audio visualizer that runs in your browser, and as the living wallpaper of your Mac. Twenty-four GPU shader worlds (fractals, a wormhole, liquid light, dripping goop, an all-seeing eye, oil-slick rainbows, a terrain built from your song, a bedside monitor, a spinning record and more) that melt and pulse with whatever you are listening to: Spotify in a browser tab, YouTube, your microphone or a local file.
+A psychedelic audio visualizer that runs in your browser, and as the living wallpaper of your Mac. Twenty-five GPU shader worlds (fractals, a wormhole, liquid light, dripping goop, an all-seeing eye, oil-slick rainbows, a terrain built from your song, a bedside monitor, a spinning record and more) that melt and pulse with whatever you are listening to: Spotify in a browser tab, YouTube, your microphone or a local file.
 
 It listens like a musician. It finds the tempo and locks onto the beat, counts bars so scene changes land on the downbeat, tells kicks from snares from hats, notices drops, and works out the key. And it follows the **melody**: every scene gets a semitone-resolution spectrum, the twelve notes of the scale and the pitch of the tune itself, so the shapes move with the notes and not only with the drums. It can also name the song that is playing, Shazam-style, and pull the album's colours into the picture.
 
@@ -29,8 +29,11 @@ The best way to live with Phosphene: a small menu bar app that turns your Mac's 
 - **Palettes your way.** Pin one, let it change with the scenes, or have it change every so often on its own (about every 45 seconds, easing across). A second stepper row in the menu steps through palettes.
 - **Skip from the menu bar.** A small skip button beside the icon goes to the next scene in one click (right-click or Option-click for the previous one), and a stepper row in the menu steps through scenes without closing it. The scene's name fades in at the bottom left of the desktop for a moment. The button can be hidden from the menu.
 - **Every display matches.** One display's engine leads and the others copy its scene, palette, hue, clock and album art, so two screens never drift into different colours. A palette picked in the menu stays until you pick another, even when Song ID finds the album.
+- **Colours from the words.** Once the song is named, its lyrics choose the palette: "Blue (Da Ba Dee)" turns the desktop blue, Luis Miguel's "Oro de ley" turns it gold, and a song that names no colour takes the colour of its mood. This is the default and beats a pinned palette; picking a palette in the menu during a song keeps yours for that song, and "Colours from the song's words" in the Palette menu switches it off. See [Colours from the words](#colours-from-the-words).
 - **Lyrics on the desktop.** With Song ID on, the words of the song play over the picture on every display, clear of the Dock, the song card and the scene label ("Show lyrics" in the menu, on by default). See [Lyrics](#lyrics).
 - **A fresh look each time.** When music starts it opens on a random scene and palette (a menu switch turns this off), and the song card sits bottom right, clear of the Dock.
+- **A screen saver too.** After a few idle minutes (you pick how many, or start it from the menu) the picture rises over everything on every display, at full strength over black, and steps through the scenes on its own. With music playing it is the visualizer, lyrics and all; in silence it moves to a silent groove of its own. Any key, click or pointer move sends it back under the icons. While it runs it keeps the Mac awake, and it stays out of the way when another app is holding the screen on behind a full-screen window (a film, a call).
+- **Calm looks for music you work to.** Focus, Relax, Meditate and Sleep (the Look menu) turn the visualizer into something you can leave on while you work or rest: the drums stop reaching the picture, everything slows, the edges of vision go still, scenes change rarely and by fading, and no song is looked up. Left on Auto it turns to Focus by itself when it hears focus music, and back when ordinary music returns. See [Looks and the pulse](#looks-and-the-pulse).
 - **It stays out of the way.** It pauses when the desktop is covered by a full-screen app, when the displays sleep and when the screen is locked, and drops to 20 frames a second in silence if you ask it to stay on.
 
 ```sh
@@ -45,6 +48,30 @@ Run `./setup-signing.sh` once before building if you plan to rebuild. It creates
 To test it without touching the audio permission, `Phosphene Wallpaper.app/Contents/MacOS/PhospheneWallpaper --test-audio song.m4a --test-seconds 10 --status-file status.json` feeds a file through the same path and writes what the app and the engine are doing once a second.
 
 How it works: a borderless, click-through window at desktop level (above the wallpaper, below the icons) on each display holds a transparent `WKWebView`, which loads the engine from the app bundle with `?wallpaper`. WebKit draws WebGL through Metal, so the shaders run on the same GPU path a hand-written Metal port would use. Audio comes from a Core Audio process tap, is mixed to mono in Swift and pushed to the page sixty times a second, where `src/spectrum.js` (a JavaScript FFT that matches the Web Audio analyser) feeds the same ears as the website. Swift decides when music is playing (most of a second of sound to wake, four seconds of silence to sleep, so a notification ping does not count) and tells the engine to melt in or out; the engine's display pass does the dissolve and writes a transparent canvas where the desktop should show. Song ID and album art are relayed through the website's functions; lyrics are looked up by the app itself.
+
+## Looks and the pulse
+
+<p align="center"><img src="docs/images/look-focus.jpg" alt="The Focus look: Aurora, dimmed and slowed, with the edges of the screen stilled" width="100%"></p>
+
+Functional music (Brain.fm is the best known) is made to be worked or slept to, and a visualizer built for drops and choruses is the wrong picture for it. A **look** changes how the whole engine behaves, in every scene:
+
+| Look | What the screen does |
+| --- | --- |
+| Music | The visualizer as it always was |
+| Focus | Still and out of the way: an eighth of the beat gets through, the clock runs at a third, the picture dims and the edges go quiet. A scene holds for five minutes |
+| Relax | Softer than Music, warmer, at half pace |
+| Meditate | Very slow, with one swell at a resting breathing pace |
+| Sleep | Warm and dim, fading to black over twenty minutes |
+
+**The pulse.** Focus music carries a steady amplitude modulation: part of the mix is rippled a fixed number of times a second, in step with the beat. Woods et al. 2024 (Communications Biology) describe 16 Hz, confined to 200 Hz to 1 kHz. `src/modlock.js` finds such a ripple in whatever is playing: its rate, its depth, its phase, and whether it lives only in the mid band (drums and strumming ripple every band at once, which is how the two are told apart). An oscillator is kept in step with it, and in a calm look the screen carries it as fine rings moving outward at exactly that rate. "Show the pulse readout" prints what it hears.
+
+On a synthetic test track (an ambient pad at 120 bpm with a 16 Hz, 30% modulation in the mid band) the app reads 16.00 Hz and 29.9% and turns to Focus on its own. On the same pad without modulation, and on an ordinary pop song, it finds nothing. It has not yet been run against Brain.fm's own audio.
+
+**No flicker.** The rings never go into overall brightness. They average out across the screen, each pixel's swing is capped at 4.5% of its own value and 6% of full-scale luminance, and the rings fade toward the edges of the screen. The app measures this on itself: in the self-test the worst pixel swung 1.1% of full scale at the pulse rate and the row as a whole 0.07%, against the 10% that accessibility rules count as a flash (WCAG 2.3.1). When the display cannot draw that many rings a second cleanly, every second one is carried instead. "Carry the pulse on screen" turns it off, and so does the system's Reduce Motion setting.
+
+**The pulse log.** "Keep a log of the pulse" (in the Look menu) writes a row every two seconds while music plays to `~/Library/Application Support/Phosphene Wallpaper/Pulse logs/`, one CSV a day: the time, the app being listened to, the look, whether a pulse is locked, its rate and depth, how long it has shown the mid-band signature, and the tempo. Only these numbers are kept, never audio.
+
+On the website the looks are in Settings, or press `M`.
 
 ## The website
 
@@ -128,17 +155,30 @@ No install, no account, no build step. The visuals and all the analysis run on y
 | 22 | Swarm | Sixty thousand particles on a Clifford strange attractor | Each particle is tuned to a note and glows when it sounds; the melody leans the attractor's shape; kicks fatten the particles |
 | 23 | Crystal | Voronoi cells, each lit by its own note | A cell shines when its pitch sounds; the melody's own cells flash on each note; seams glow on snares |
 | 24 | Julia Bloom V2 | Julia Bloom that comes apart every sixteen beats and rejoins as a different shape: two to five arms, sometimes a mirrored skull or mask, sometimes extra limbs | The melody picks the shape as in Julia Bloom, and each new note pushes it over the edge; the beat count decides when the pieces part and what they come back as |
+| 25 | Stillwater | Light pooling and drifting on dark water. Nothing in it answers the beat, and the tune only tints it. Made for music you work to, and the scene the calm looks open on |
 
 Every scene draws into a feedback buffer. Each frame the previous image is melted along a slowly turning flow, dripped, zoomed, swirled and hue-shifted a little before the new one is laid on top. That is where the trails and the oozing come from; the **Goo** setting is how much. Kicks punch the zoom and split the colour channels, drops crank everything, and each new note tints the trails, so a tune leaves rings of different colours behind it.
 
-Colour comes from a cosine palette. Seven presets (Rainbow, Acid, Orchid, Ember, Candy, Lagoon, Coral) rotate with the scenes, `P` steps through them, and once a song is named the album's own colours take over.
+Colour comes from a cosine palette. Seven presets (Rainbow, Acid, Orchid, Ember, Candy, Lagoon, Coral) rotate with the scenes and `P` steps through them. Once a song is named, its words choose the colours (below), and when they have nothing to say the album's own colours take over.
+
+### Colours from the words
+
+When Song ID names the song, phosphene fetches its lyrics (even with the Lyrics layer off; the words stay in memory and are never shown or kept) and reads them for colour, in this order:
+
+1. **A colour by name.** Blue, azul, bleu, blau, 青, 파란, синий, أزرق, नीला and so on, in about twenty languages: English, Spanish, Portuguese, French, Italian, German, Dutch, the Scandinavian languages, Polish, Russian, Turkish, Indonesian, Tagalog, Arabic, Hindi, Japanese, Chinese, Korean and Thai. A colour named three times, or once in the title, wins: "Blue (Da Ba Dee)", "Oro de ley", "Purple Rain", "Yellow", "Back in Black", "La vie en rose".
+2. **Things with a colour.** The sea, the sky, fire, the sun, the night, the moon, snow, blood, forests, diamonds. A song full of them takes their colour.
+3. **The mood.** Words of love, sadness, joy, anger, dreams and darkness, and when those are thin too, the music: after a dozen seconds a minor key leans the palette sad or fierce, a major one bright or tender, and the tempo picks between them. Adele's "Hello" names no colour and has few mood words, so it waits for the music: in a minor key at a slow tempo it goes deep blue.
+
+A colour named in the line being sung tints the picture for ten seconds on its own, then the song's colour returns. If a second colour is nearly as strong as the first, the palette runs between the two ("Gold and night" for BTS's "Dynamite").
+
+It is a word list, not a translator (`src/wordcolor.js`), so it knows those languages and only the words in it; words that look like colours but are not (明白, "understand", contains 白, "white") are set aside. Switch it off with **Colors from the words** in Settings, `?words=0`, or the Palette menu in the Mac app.
 
 ## Song ID
 
 With the microphone or a shared tab, phosphene names what is playing. After four seconds of music it fingerprints the audio and asks; if there is no match it tries again with eight and then twelve seconds, then backs off. When a song is named:
 
 - a now-playing card slides in at the top right with the cover, title, artist, tempo and key, for a few seconds when a song is named or changes, never on a timer, and only once the song is certain; the dock only ever shows the source
-- the palette eases toward the cover's two most vivid colours
+- the palette eases toward the cover's two most vivid colours, unless the song's words chose its colours
 - the Vinyl label and the Oracle's iris show the artwork
 
 It does not poll, and it is honest about what it knows. The card only ever shows a song it is sure of:
@@ -210,7 +250,7 @@ Pick a source on the first screen:
 - **Audio file**. Pick or drag in an MP3, WAV, FLAC or M4A. It plays through your speakers with a scrub bar.
 - **Just watch**. A built-in silent beat, no permissions needed.
 
-Settings: sensitivity, trails, **goo** (how much everything melts), **melody** (how hard the tune moves things), symmetry, quality, auto-cycle, Song ID, key colors.
+Settings: sensitivity, trails, **goo** (how much everything melts), **melody** (how hard the tune moves things), symmetry, quality, auto-cycle, Song ID, colors from the words, key colors.
 
 Keyboard: `1` to `9`, `0`, `-` and `=` jump to scenes 1 to 12, hold `Shift` for 13 to 23. `←` `→` or `Space` change scene, `A` toggles auto-cycle, `C` shifts the colours, `P` steps the palette, `G` steps goo (off, medium, max), `I` names the song, `[` `]` change the symmetry, `↑` `↓` change sensitivity, `F` fullscreen, `H` hides everything, `?` lists all of this.
 
@@ -288,7 +328,6 @@ Deploying is just Vercel: `vercel --prod` from the repo root, no settings needed
 
 ## What's next
 
-- **Screen saver mode.** The same engine as a Mac screen saver, so the visualizer takes over when the Mac is idle and keeps listening to whatever is playing.
 - **Liquify.** The engine can already draw a copy of the wallpaper image and push it around as the visualizer takes over; the app does not use it yet because macOS does not reliably say which image is on the desktop.
 - **Syphon and NDI output** from the Mac app, so VJ tools (Resolume, VDMX, OBS) can take the visuals as a video source.
 - Preset sharing by link, clip recording (canvas capture to video), MIDI and OSC control for live sets, and lyrics-aware moments once the song is named.
@@ -306,7 +345,7 @@ v3 (this: the melodic ear and a melody-driven rewrite of every scene, rebuilt Au
 ## Repository layout
 
 - `index.html` the app shell (welcome screen, dock, settings, monitor readouts)
-- `src/scenes.js` the twenty-four scenes, GLSL plus feedback settings
+- `src/scenes.js` the twenty-five scenes, GLSL plus feedback settings
 - `src/shaders.js` the shared GLSL prelude, feedback, display and overlay passes
 - `src/renderer.js` WebGL2 setup, per-scene programs, textures and the history ring, overlays, mips, adaptive resolution, the benchmark
 - `src/audio.js` sources, analysers, the audio tap, band levels, the demo groove
@@ -314,6 +353,7 @@ v3 (this: the melodic ear and a melody-driven rewrite of every scene, rebuilt Au
 - `src/features.js` the rhythmic ear: onsets, tempo, beat phase, bars, drops, key
 - `src/shazam.js` the recognition fingerprint (also runs in Node)
 - `src/songid.js` and `src/songid-worker.js` the Song ID state machine and off-thread fingerprinting
+- `src/wordcolor.js` colours from the words: colour words, things and moods in about twenty languages, and the music's mood
 - `src/lyrics.js` the lyrics layer: fetching, timing against the song's position, and the type on screen
 - `src/spectrum.js` a JavaScript spectrum analyser, for audio pushed in by the Mac app
 - `src/palette.js` palette presets and album art to palette

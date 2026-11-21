@@ -4,6 +4,7 @@ import { AudioEngine } from './audio.js';
 import { ECG } from './ecg.js';
 import { SongID } from './songid.js';
 import { paletteFromImage, loadArt, DEFAULT_PALETTE, PALETTES, clonePalette } from './palette.js';
+import { readSong, readLine, moodOf, familyPalette } from './wordcolor.js';
 import { LyricSync, LyricLayer } from './lyrics.js';
 
 const $ = id => document.getElementById(id);
@@ -40,6 +41,11 @@ addEventListener('resize', () => renderer.resize());
 const lyricSync = new LyricSync(), lyricLayer = new LyricLayer($('lyrics'));
 let lyricsOn = wallpaper ? false : params.has('lyrics') ? params.get('lyrics') !== '0' : store.get('lyrics', false);
 let lyricNow = null, lyricKey = '', glOpacity = 1;
+// Colours from the words: the song's lyrics choose its palette (see wordcolor.js). On by default.
+let wordsOn = params.has('words') ? params.get('words') !== '0' : store.get('words', true);
+const words = { song: null, entry: null, read: null, mood: null, at: 0, lineK: -1, moment: null, momentFam: null, until: 0 };
+const MOMENT = 10;                                          // a colour named in the line being sung holds this many seconds
+let shownFor;                                               // the menu's stepper showed a preset for this song: it stays until the next
 
 // Everything the shaders read, by uniform name.
 const u = {
@@ -47,6 +53,7 @@ const u = {
   KICK: 0, SNARE: 0, HAT: 0, PH: 0, BAR: 0, BT: 0, BPM: 0, EN: 0, DROP: 0, BP: 0,
   MEL: 0.5, NOTE: 0, MELV: 0, MELH: 0, TONE: 0, SP: 0, ARM: 0,
   GOO: 0.5, IRID: 0.4, ARTC: 0, BGA: 0, PA: [0.5, 0.5, 0.5], PB: [0.5, 0.5, 0.5], PF: [1, 1, 1], PD: [0, 0.33, 0.67],
+  LG: 1, LS: 1, LE: 0, LW: 0, LR: 1, MODP: 0, MODA: 0,
   hist: new Float32Array(8), scene: 0,
 };
 // The palette offset the scenes see is this base plus a lean from the melody.
@@ -62,13 +69,138 @@ const palette = { cur: clonePalette(PALETTES[presetIx]), to: PALETTES[presetIx],
 let pinned = false;                                         // the wallpaper's menu chose this palette: neither an album nor a scene change replaces it
 // With several displays one engine leads and the others follow its look, so every screen shows the same colours.
 let follower = false, lead = null, artUrl = null, followArt = null, lookT = 0;
+let autoBefore = null;                                      // what "change with the music" was before the screen saver took over
+let saverOn = false;                                        // the Mac app has taken over the screen as a screen saver
 let rawBT = 0, btOff = 0;                                   // this engine's own beat count, and a follower's offset onto the leader's
 let rotating = false, paletteT = 0, paletteEvery = 45;                         // the wallpaper's "change every so often": a new palette about every 45 seconds
+// What the palette eases toward, in order: a palette picked by hand while this song plays; a colour the line
+// being sung names; the song's words; a palette pinned in the menu; the album's cover; the preset of the moment.
+// The words come before a pinned palette: they are the default, and switching them off hands it back.
+function wantedPalette(now) {
+  const preset = PALETTES[presetIx];
+  if (song && shownFor === song) return preset;
+  if (wordsOn && words.moment && now < words.until) return words.moment;
+  if (wordsOn && palette.words) return palette.words;
+  if (pinned || !palette.album) return preset;
+  return palette.album;
+}
+// Read the song's words once its lyrics arrive, the line being sung as each one starts, and the music's mood
+// when the words alone say too little.
+function readWords(want, line, now, f) {
+  if (want !== words.song) { Object.assign(words, { song: want, entry: null, read: null, mood: null, lineK: -1, moment: null, momentFam: null, until: 0 }); palette.words = null; }
+  const e = want && lyricSync.entry;
+  if (!wordsOn || !e) return;
+  if (e.state === 'ready' && words.entry !== e) {
+    words.entry = e; words.at = now; words.read = readSong(e.lines, want.title || ''); words.mood = null;
+    palette.words = words.read.fam ? words.read.palette : null;
+  }
+  if (words.read && !words.read.fam && !words.mood && now - words.at > 12) {   // a dozen seconds of music to know its key and tempo
+    words.mood = moodOf(words.read.scores, { minor: f.minor, keyConf: f.keyConf, bpm: f.locked ? f.bpm : 0 });
+    palette.words = words.mood.palette;
+  }
+  if (line && line.k !== words.lineK) {
+    words.lineK = line.k;
+    const fam = readLine(line.cur), songFam = words.read && (words.read.fam || (words.mood && words.mood.fam));
+    if (fam && fam !== songFam) { if (fam !== words.momentFam) words.moment = familyPalette(fam); words.momentFam = fam; words.until = now + MOMENT; }
+  }
+}
+function setWords(on, announce) {
+  wordsOn = !!on;
+  if (!wallpaper && !params.has('words')) store.set('words', wordsOn);
+  if (wordsOn && !wallpaper && !songId.enabled) setSongId(true);
+  $('wordSwitch').classList.toggle('on', wordsOn); $('wordSwitch').setAttribute('aria-checked', wordsOn);
+  if (announce) toast(wordsOn ? 'Colors from the words' : 'Colors from the album', wordsOn && !song ? 'once the song is named' : '');
+}
+
 function setPreset(i, announce) {
   presetIx = (i + PALETTES.length) % PALETTES.length;
   if (!palette.album || pinned) palette.to = PALETTES[presetIx];
   if (wallpaper && !follower) post({ type: 'palette', index: presetIx });
   if (announce) toast('Palette ' + PALETTES[presetIx].name, palette.album ? 'after this album' : '');
+}
+
+// ---------- Looks ----------
+// A look is how the picture behaves. Music is the visualizer as it always was. The calm looks are made for
+// functional music (music to work, rest or sleep to): the drums stop reaching the picture, everything slows,
+// the edges of vision go quiet, scenes change rarely and by fading, and nothing is looked up or named.
+//   react  how much of the beat and drums gets through     pace  the scenes' clock
+//   gain sat edge warm  brightness, colour, how far the edges are stilled, how warm the light is
+//   hold   seconds on a scene     pulse  how strongly a found modulation is carried on screen
+//   breath a slow swell at a resting breathing pace (about five and a half a minute)
+const LOOKS = {
+  music:    { react: 1,    pace: 1,    gain: 1,    sat: 1,    edge: 0,   warm: 0,    hold: 0,   pulse: 0,   breath: 0 },
+  focus:    { react: 0.12, pace: 0.3,  gain: 0.6,  sat: 0.8,  edge: 1,   warm: 0,    hold: 300, pulse: 1,   breath: 0 },
+  relax:    { react: 0.3,  pace: 0.5,  gain: 0.78, sat: 0.95, edge: 0.5, warm: 0.15, hold: 180, pulse: 0.6, breath: 0 },
+  meditate: { react: 0.08, pace: 0.25, gain: 0.58, sat: 0.7,  edge: 1,   warm: 0.1,  hold: 480, pulse: 0.5, breath: 1 },
+  sleep:    { react: 0.05, pace: 0.18, gain: 0.4,  sat: 0.5,  edge: 1,   warm: 1,    hold: 600, pulse: 0,   breath: 0 },
+};
+const LOOK_NAMES = { auto: 'Auto', music: 'Music', focus: 'Focus', relax: 'Relax', meditate: 'Meditate', sleep: 'Sleep' };
+const sceneSet = names => names.map(n => SCENES.findIndex(s => s.name === n)).filter(i => i >= 0);
+const LOOK_SCENES = {
+  focus: sceneSet(['Stillwater', 'Aurora', 'Oil Slick', 'Liquid Dream']),
+  relax: sceneSet(['Stillwater', 'Aurora', 'Oil Slick', 'Liquid Dream', 'Goop', 'Chladni']),
+  meditate: sceneSet(['Stillwater', 'Aurora']), sleep: sceneSet(['Stillwater', 'Aurora']),
+};
+// 'auto' turns to Focus by itself when the music carries a steady mid-band modulation (the signature
+// of functional music, see modlock.js) or the host says the source is such an app, and back when it stops.
+let lookSetting = LOOKS[params.get('look')] || params.get('look') === 'auto' ? params.get('look') : store.get('look', 'auto');
+let lookNow = 'music', lookSince = 0, hinted = false, autoCalm = false, plainFor = 0;
+const lk = { ...LOOKS.music };                              // the values in force, easing toward the look's
+let sceneBefore = null;
+let dip = 1, fadeTo = null;                                 // a calm look changes scene by dimming, switching, and coming back
+let pulseOn = store.get('pulse', true), modAmp = 0, readoutOn = params.get('readout') === '1', readoutT = 0, pulseSeen = false;
+let sleepMinutes = 20, meter = null;
+const stillOnly = matchMedia('(prefers-reduced-motion: reduce)');
+function wantedLook(now, dt) {
+  if (follower && lead && lead.lk) return lead.lk;
+  if (lookSetting !== 'auto') return lookSetting;
+  const sig = audio.mod.narrowFor;
+  if (sig >= 8) { autoCalm = true; plainFor = 0; } else if (autoCalm && sig <= 0) { plainFor += dt; if (plainFor > 20) autoCalm = false; }
+  return hinted || autoCalm ? 'focus' : 'music';
+}
+function setLook(id, now) {
+  const was = lookNow; lookNow = id; lookSince = now;
+  body.dataset.look = id;
+  if (id !== 'music') { clearSongDisplay(); songId.reset(); }
+  // a calm look brings its own scene; the one it replaced comes back with the music
+  const set = LOOK_SCENES[id];
+  if (!follower) {
+    if (set && was === 'music') sceneBefore = u.scene;
+    if (set && !set.includes(u.scene)) fadeTo = set[0];
+    else if (!set && sceneBefore !== null) { if (!auto) fadeTo = sceneBefore; sceneBefore = null; }
+  }
+  if (!follower && was !== id) caption(LOOK_NAMES[id] + ' look');
+  syncLookButtons();
+}
+// a short line at the bottom left that fades in and out (the wallpaper names scenes there too)
+function caption(text) {
+  let el = $('wpLabel');
+  if (!el) { el = document.createElement('div'); el.id = 'wpLabel'; el.className = 'wp-label'; body.appendChild(el); }
+  el.textContent = text;
+  el.classList.remove('show'); void el.offsetWidth; el.classList.add('show');
+}
+function syncLookButtons() { document.querySelectorAll('#look button').forEach(b => b.classList.toggle('on', b.dataset.look === lookSetting)); }
+function pickLook(id) { lookSetting = id; if (!wallpaper && !params.has('look')) store.set('look', id); autoCalm = false; syncLookButtons(); }
+function nextCalmScene() { const set = LOOK_SCENES[lookNow] || []; if (set.length > 1) fadeTo = set[(set.indexOf(u.scene) + 1) % set.length]; }
+// The flicker meter (self-test): a row of pixels each frame, then how far each one's light swings at the pulse's rate.
+function meterRead(now) {
+  if (!meter) return;
+  const m = meter; renderer.strip(m.rows[m.head]); m.t[m.head] = now; m.head = (m.head + 1) % m.rows.length; m.n = Math.min(m.rows.length, m.n + 1);
+}
+function meterReport() {
+  const m = meter, f = audio.mod.rateOut;
+  if (!m || m.n < m.rows.length || !f) return null;
+  const N = m.rows.length, W = m.rows[0].length, t0 = Math.min(...m.t), w = 2 * Math.PI * f;
+  let worst = 0, sum = 0, mre = 0, mim = 0, mean = 0;
+  for (let x = 0; x < W; x++) {
+    let re = 0, im = 0, dc = 0;
+    for (let i = 0; i < N; i++) dc += m.rows[i][x];
+    dc /= N; mean += dc / W;
+    for (let i = 0; i < N; i++) { const v = m.rows[i][x] - dc, a = w * (m.t[i] - t0); re += v * Math.cos(a); im -= v * Math.sin(a); }
+    const swing = 4 * Math.hypot(re, im) / N; worst = Math.max(worst, swing); sum += swing; mre += re / W; mim += im / W;
+  }
+  // swings are peak to peak, as a fraction of full-scale luminance: per pixel (worst and average), and of the whole row together
+  return { rate: +f.toFixed(2), worst: +worst.toFixed(4), average: +(sum / W).toFixed(4), whole: +(4 * Math.hypot(mre, mim) / N).toFixed(4), level: +mean.toFixed(3), frames: N };
 }
 
 // ---------- Toast ----------
@@ -159,16 +291,17 @@ audio.onBeat = now => {
     $('heart').classList.remove('beat'); void $('heart').offsetWidth; $('heart').classList.add('beat');
   }
   beatsInScene++;
-  if (!follower && Math.random() < 0.1) { base.C += 0.15 + Math.random() * 0.3; if (cTarget !== null) cTarget = base.C; }
-  if (auto && (beatsInScene >= 48 || now - sceneStart > 45)) {
+  if (!follower && lookNow === 'music' && Math.random() < 0.1) { base.C += 0.15 + Math.random() * 0.3; if (cTarget !== null) cTarget = base.C; }
+  if (auto && lookNow === 'music' && (beatsInScene >= 48 || now - sceneStart > 45)) {
     if (F().locked) pendingSwitch = true; else nextLook();
   }
 };
 audio.features.onBeat = (n, downbeat, now) => {
   if (pendingSwitch && downbeat) nextLook();
-  else if (auto && downbeat && now - sceneStart > 70) nextLook();
+  else if (auto && lookNow === 'music' && downbeat && now - sceneStart > 70) nextLook();
 };
 audio.features.onDrop = now => {
+  if (lookNow !== 'music') return;                           // a calm look does not jump at a drop
   if (auto && now - sceneStart > 12) nextLook();
   if (!follower) { base.C += 0.33; if (cTarget !== null) cTarget = base.C; }
 };
@@ -290,7 +423,7 @@ const songId = new SongID(audio, {
 });
 songId.enabled = store.get('songid', true);
 if (songId.debug) window.phosphene = {                               // ?debug exposes the internals
-  audio, songId, renderer, u, base, palette, setScene: i => setScene(i, { quiet: true }), scenes: SCENES, lyricSync, lyricLayer,
+  audio, songId, renderer, u, base, palette, setScene: i => setScene(i, { quiet: true }), scenes: SCENES, lyricSync, lyricLayer, words,
   // GPU milliseconds per frame for every scene (or one), at the current resolution
   bench: (only) => { const q = renderer.quality; renderer.setQuality('high'); const out = {};
     SCENES.forEach((s, i) => { if (only === undefined || only === i) out[num(i) + ' ' + s.name] = +renderer.bench(i, audio, u, ecg).toFixed(2); });
@@ -345,6 +478,8 @@ $('colorBtn').onclick = shiftColors;
 $('idBtn').onclick = identifyNow;
 $('idSwitch').onclick = () => setSongId(!songId.enabled);
 $('lyricSwitch').onclick = () => setLyrics(!lyricsOn);
+$('wordSwitch').onclick = () => setWords(!wordsOn, true);
+$('wordSwitch').classList.toggle('on', wordsOn); $('wordSwitch').setAttribute('aria-checked', wordsOn);
 $('keySwitch').onclick = () => { keyColors = !keyColors; store.set('keycolors', keyColors); $('keySwitch').classList.toggle('on', keyColors); if (!keyColors) cTarget = null; };
 $('symDown').onclick = () => setSymmetry(u.K - 2);
 $('symUp').onclick = () => setSymmetry(u.K + 2);
@@ -430,6 +565,7 @@ addEventListener('keydown', e => {
   else if (k === 'g') { gooSetting = gooSetting > 0.66 ? 0 : gooSetting > 0.33 ? 1 : 0.5; $('goo').value = gooSetting; store.set('goo', gooSetting); toast('Goo ' + ['off', 'medium', 'max'][gooSetting * 2 | 0]); }
   else if (k === 'i') identifyNow();
   else if (k === 'l') setLyrics(!lyricsOn, true);
+  else if (k === 'm') { const ids = Object.keys(LOOK_NAMES); pickLook(ids[(ids.indexOf(lookSetting) + 1) % ids.length]); toast('Look: ' + LOOK_NAMES[lookSetting]); }
   else if (k === 'arrowup' || k === 'arrowdown') {
     e.preventDefault();
     audio.sensitivity = Math.max(0.3, Math.min(3, audio.sensitivity + (k === 'arrowup' ? 0.15 : -0.15)));
@@ -463,19 +599,23 @@ function frame(now) {
   const dt = Math.min(0.1, now - last); last = now;
   audio.update(now, dt);
   const L = audio.level, f = F();
+  const want = wantedLook(now, dt);
+  if (want !== lookNow) setLook(want, now);
+  { const to = LOOKS[lookNow], e = Math.min(1, dt / 2.5); for (const key in lk) lk[key] += (to[key] - lk[key]) * e; }
+  fpsNow += (1 / Math.max(dt, 1e-3) - fpsNow) * 0.05;
   let rate = 1;
   if (wallpaper) {
     const playing = !(f.quiet && f.quietFor > 2.5);
     calm += ((playing ? 1 : 0) - calm) * Math.min(1, dt * (playing ? 3 : 0.5));
     rate = 0.12 + 0.88 * calm;                                // nothing playing: the scene drifts at an eighth of its pace
     frameGap = calm > 0.03 ? 1 / fpsCap : 1 / 20;
-    fpsNow += (1 / Math.max(dt, 1e-3) - fpsNow) * 0.05;
     if (veil !== veilTo) {
       const step = dt / veilDur; veil = veilTo > veil ? Math.min(veilTo, veil + step) : Math.max(veilTo, veil - step);
       if (veil === 1) post({ type: 'asleep' });               // fully back to the wallpaper: the host hides the window
     }
     u.BGA = veil * veil * (3 - 2 * veil);
   }
+  rate *= lk.pace;
   vt += dt * rate;
   if (follower && lead) {                                     // stay on the leader's clock and hue
     const want = lead.T + (now - lead.at) * rate, d = want - vt;
@@ -484,7 +624,8 @@ function frame(now) {
     base.C = Math.abs(dc) > 2 ? lead.C : base.C + dc * Math.min(1, dt * 6);
   }
   // palette eases toward the album's colours, hue toward the key
-  const k = Math.min(1, dt * 1.5);
+  if (!follower) palette.to = wantedPalette(now);
+  const k = Math.min(1, dt * (words.moment && now < words.until ? 0.9 : 1.5));
   for (const part of 'abfd') for (let i = 0; i < 3; i++) palette.cur[part][i] += (palette.to[part][i] - palette.cur[part][i]) * k;
   if (cTarget !== null) { let d = (cTarget - base.C) % 1; if (d > 0.5) d -= 1; if (d < -0.5) d += 1; base.C += d * Math.min(1, dt * 0.4); }
 
@@ -498,6 +639,25 @@ function frame(now) {
   const m = audio.tones.m, lean = (m.mel - 0.5) * melodySetting;
   u.MEL = Math.max(0, Math.min(1, 0.5 + lean)); u.NOTE = Math.min(1.5, m.note * melodySetting);
   u.MELV = Math.min(1, m.conf * Math.min(1, melodySetting * 2)); u.MELH = m.hue; u.TONE = m.tone;
+  if (lk.react < 0.995) {                                     // a calm look: the drums stop reaching the picture, the bands settle
+    const R = lk.react;
+    for (const key of ['BEAT', 'KICK', 'SNARE', 'HAT', 'DROP', 'BP', 'NOTE']) u[key] *= R;
+    for (const key of ['B', 'M', 'H']) u[key] = u[key] * R + 0.3 * (1 - R);
+    u.EN = u.EN * R + 0.4 * (1 - R); u.PH = 1 - (1 - u.PH) * R;
+  }
+  // the look on screen: brightness (with a scene change's dip, a slow breath, and Sleep's long fade to black)
+  if (fadeTo !== null) { dip = Math.max(0, dip - dt / 2); if (dip === 0) { setScene(fadeTo, { quiet: true }); fadeTo = null; } } else dip = Math.min(1, dip + dt / 3);
+  const asleep = lookNow === 'sleep' ? Math.max(0, 1 - (now - lookSince) / (sleepMinutes * 60)) : 1;
+  u.LG = lk.gain * dip * dip * (3 - 2 * dip) * (1 + 0.12 * lk.breath * Math.sin(now * 2 * Math.PI / 10.9)) * asleep;
+  u.LS = lk.sat; u.LE = lk.edge; u.LW = lk.warm; u.LR = lk.react;
+  // the pulse: a steady modulation found in the music is carried as fine rings in step with it. If the
+  // screen cannot draw that many a second cleanly, it carries every second or fourth one.
+  const ml = audio.mod, pulsing = ml.locked && !audio.demoing && audio.source !== 'demo';
+  modAmp += ((pulsing && pulseOn && !stillOnly.matches ? lk.pulse : 0) - modAmp) * Math.min(1, dt * 0.7);
+  if (pulsing) { let div = 1; while (ml.rateOut / div > fpsNow / 2.6 && div < 8) div *= 2; const c = ml.cycles(now) / div; u.MODP = c - Math.floor(c); }
+  u.MODA = modAmp;
+  if (pulsing && !pulseSeen && lookNow !== 'music' && !follower) caption('Pulse found  ·  ' + ml.rateOut.toFixed(1) + ' Hz');
+  pulseSeen = pulsing;
   u.C = base.C + 0.4 * lean * m.conf;                        // a rising tune slides the palette one way, a falling one the other
   const hh = u.hist; hh[0] = m.mel; hh[1] = m.conf; hh[2] = f.energy; hh[3] = f.locked ? (Math.exp(-f.phase * 3.5) + 0.25 * Math.exp(-(((f.phase - 0.42) / 0.12) ** 2))) * (0.35 + 0.65 * Math.min(1, L.b)) : L.b / 1.5; hh[4] = f.kick / 1.5; hh[5] = m.note; hh[6] = L.m / 1.5; hh[7] = L.h / 1.5;
   const ph = f.phase;
@@ -507,14 +667,26 @@ function frame(now) {
     if (!f.bpm) btOff += d; else if (Math.abs(d) > 0.6) btOff += Math.round(d);
   } else if (!follower) btOff = 0;
   u.BT = rawBT + btOff;
-  u.Z += dt * rate * (0.35 + L.b * 1.6);
+  u.Z += dt * rate * (0.35 + u.B * 1.6);
   u.SP = (u.SP + dt * rate * 3.49 * (1 - 2.4 * f.drop)) % 6283.1853;       // 33 1/3 rpm; a drop spins the record back
-  if (auto && now - sceneStart > (calm < 0.5 ? 600 : 90)) setScene(u.scene + 1);   // keep moving through quiet passages
+  if (lookNow !== 'music') { if (auto && !follower && fadeTo === null && lk.hold > 30 && now - sceneStart > lk.hold) nextCalmScene(); }
+  else if (auto && now - sceneStart > (calm < 0.5 ? 600 : 90)) setScene(u.scene + 1);   // keep moving through quiet passages
   renderer.adapt(dt, now);
   ecg.update(now, dt, L.m);
   renderer.render(audio, u, ecg);
-  songId.update(now);
+  meterRead(now);
+  if (lookNow === 'music') songId.update(now);                // a calm look names nothing and looks nothing up
   npRender(now);
+  if (now - readoutT > 0.25) {                                // the pulse readout, four times a second
+    readoutT = now;
+    let el = $('pulse');
+    const show = readoutOn && pulsing;
+    if (show && !el) { el = document.createElement('div'); el.id = 'pulse'; el.className = 'wp-pulse'; body.appendChild(el); }
+    if (el) {
+      el.classList.toggle('show', show);
+      if (show) el.textContent = 'Pulse ' + ml.rateOut.toFixed(1) + ' Hz  ·  depth ' + Math.round(ml.depthOut * 100) + '%  ·  ' + (ml.narrowFor >= 3 ? 'mid band' : 'all bands') + '  ·  locked';
+    }
+  }
   // how sure we are the album on screen is the song playing: 1 known, 0.4 while a change is suspected, 0 otherwise
   let artc = song && songId.state === 'known' ? 1 : song && (songId.state === 'suspect' || songId.state === 'identifying') ? 0.4 : 0;
   if (follower && lead) artc = lead.artc;
@@ -524,26 +696,29 @@ function frame(now) {
   let ly = null;
   if (follower) ly = lyricsOn && lead && lead.ly || null;
   else {
-    const want = lyricsOn && songId.enabled ? song : null;
+    const want = (lyricsOn || wordsOn) && songId.enabled ? song : null;
     lyricSync.track(want);
-    if (want && songId.state === 'known') ly = lyricSync.at(now);
+    const line = want && songId.state === 'known' ? lyricSync.at(now) : null;
+    if (lyricsOn) ly = line;
+    readWords(want && songId.state !== 'idle' ? want : null, line, now, f);
   }
   const lyKey = ly ? [ly.k, ly.cur, ly.prev, ly.next].join('|') : '';
   if (lyKey !== lyricKey) { lyricKey = lyKey; lyricNow = ly; lookT = 0; }   // tell the other displays at once
   lyricLayer.show(ly);
-  lyricLayer.frame((wallpaper ? 1 - u.BGA : 1) * glOpacity, f.beatPulse);
+  lyricLayer.frame((wallpaper ? 1 - u.BGA : 1) * (saverOn ? 1 : glOpacity), f.beatPulse);
   // the tonearm: down while music plays, lifted in silence and while a skip is being checked
   const checking = !song && (songId.state === 'suspect' || songId.state === 'identifying');
   let arm = audio.source !== 'demo' && ((f.quiet && f.quietFor > 1) || checking) ? 0 : 1;
   if (follower && lead) arm = lead.arm;
-  if (rotating && !follower && calm > 0.5 && now - paletteT > paletteEvery) {   // a different palette every so often; the colours ease across
+  if (rotating && !follower && calm > 0.5 && now - paletteT > paletteEvery && !(wordsOn && palette.words)) {   // a different palette every so often; the colours ease across
     paletteT = now;
     setPreset(presetIx + 1 + (Math.random() * (PALETTES.length - 1) | 0), false);
   }
   if (wallpaper && !follower && now - lookT > 0.2) {          // five times a second, tell the host how this screen looks
     lookT = now;
     const t = palette.to;
-    post({ type: 'look', look: { scene: u.scene, K: u.K, C: base.C, T: vt, BT: u.BT, to: { a: [...t.a], b: [...t.b], f: [...t.f], d: [...t.d] }, art: artUrl, artc, arm, ly: lyricNow } });
+    post({ type: 'look', look: { scene: u.scene, K: u.K, C: base.C, T: vt, BT: u.BT, to: { a: [...t.a], b: [...t.b], f: [...t.f], d: [...t.d] }, art: artUrl, artc, arm, ly: lyricNow,
+      lk: lookNow, mod: pulsing ? { r: +ml.rateOut.toFixed(2), d: +ml.depthOut.toFixed(3), n: ml.narrowFor >= 3 } : null } });
   }
   u.ARM += (arm - u.ARM) * Math.min(1, dt * 2);
   if (SCENES[u.scene].monitor && now - monT > 0.08) {       // the monitor's readouts, a dozen times a second
@@ -565,12 +740,18 @@ if (wallpaper) {
   const setting = {
     goo: v => { gooSetting = +v; }, melody: v => { melodySetting = +v; }, trails: v => { trailsSetting = +v; },
     sensitivity: v => { audio.sensitivity = +v; }, fps: v => { fpsCap = +v || 60; }, quality: v => renderer.setQuality(String(v)),
-    opacity: v => { $('gl').style.opacity = glOpacity = +v; },  // below 1 the desktop shows through the picture
+    opacity: v => { glOpacity = +v; if (!saverOn) $('gl').style.opacity = glOpacity; },  // below 1 the desktop shows through the picture
     songid: v => { if (!!v !== songId.enabled) setSongId(!!v); },
     lyrics: v => setLyrics(!!v),
+    words: v => setWords(!!v),
     card: v => body.classList.toggle('np-on', !!v),
     stayOn: v => { if (v) { veil = veilTo = 0; } },
     paletteEvery: v => { paletteEvery = Math.max(2, +v || 45); },
+    look: v => { if (LOOKS[v] || v === 'auto') pickLook(String(v)); },
+    hint: v => { hinted = !!v; },                              // the host knows the source is a functional music app
+    pulse: v => { pulseOn = !!v; }, readout: v => { readoutOn = !!v; },
+    sleepMinutes: v => { sleepMinutes = Math.max(0.2, +v || 20); },
+    meter: v => { meter = v ? { rows: Array.from({ length: 90 }, () => new Float32Array(96)), t: new Float64Array(90), head: 0, n: 0 } : null; },
     follower: v => {
       if (!!v === follower) return;
       follower = !!v;
@@ -589,24 +770,22 @@ if (wallpaper) {
     },
     set(key, value) { if (setting[key]) setting[key](value); },
     setScene: i => setScene(i, { quiet: true }),
+    // music has just started: open on this scene, or in a calm look on one of that look's own
+    start: i => { const set = LOOK_SCENES[lookNow]; setScene(set && set.length ? set[Math.random() * set.length | 0] : i, { quiet: true }); },
     next: () => nextLook(),
     go: i => lookAt(i),                                        // the skip button and the menu's stepper
     // a caption that fades in at the bottom left of the desktop and out again (the scene's name after a skip)
-    label(text) {
-      let el = $('wpLabel');
-      if (!el) { el = document.createElement('div'); el.id = 'wpLabel'; el.className = 'wp-label'; body.appendChild(el); }
-      el.textContent = text;
-      el.classList.remove('show'); void el.offsetWidth; el.classList.add('show');
-    },
+    label(text) { caption(text); },
     setAuto: on => setAuto(!!on),
     // a palette from the menu stays until another is picked; -1 hands the choice back to the scenes and the album
     // -2 changes palette every so often on its own clock.
-    setPalette: i => {
+    // byHand: picked in the menu just now, so it beats the words for the rest of this song
+    setPalette: (i, byHand) => {
       rotating = i === -2; pinned = i >= 0 || rotating;
-      if (i >= 0) setPreset(i, false); else if (rotating) paletteT = performance.now() / 1000; else if (palette.album) palette.to = palette.album;
+      if (i >= 0) { setPreset(i, false); if (byHand) shownFor = song; } else if (rotating) paletteT = performance.now() / 1000; else if (palette.album) palette.to = palette.album;
     },
     // show this palette now without changing the mode: the menu's stepper, and the random start
-    showPreset: i => { presetIx = (i + PALETTES.length) % PALETTES.length; palette.to = PALETTES[presetIx]; paletteT = performance.now() / 1000; post({ type: 'palette', index: presetIx }); },
+    showPreset: (i, byHand) => { presetIx = (i + PALETTES.length) % PALETTES.length; palette.to = PALETTES[presetIx]; if (byHand) shownFor = song; paletteT = performance.now() / 1000; post({ type: 'palette', index: presetIx }); },
     // another display's engine leads: take its scene, symmetry, palette, hue, clock and album art
     follow(s) {
       if (!follower || !s) return;
@@ -639,14 +818,32 @@ if (wallpaper) {
     wake(seconds = 3.5) { paused = false; veilTo = 0; veilDur = seconds; startLoop(); },
     sleep(seconds = 3) { veilTo = 1; veilDur = seconds; if (paused || veil === 1) { veil = 1; post({ type: 'asleep' }); } },
     setPaused(p) { paused = !!p; if (!paused) startLoop(); },
+    // Screen saver: the picture fills the screen over black at full strength, and keeps moving on a silent
+    // groove of its own when nothing is playing. Turning it off hands back to the wallpaper's own rules.
+    saver(on) {
+      saverOn = !!on; audio.idleDemo = saverOn;
+      body.classList.toggle('saver', saverOn);
+      document.documentElement.style.background = body.style.background = saverOn ? '#000' : 'transparent';
+      $('gl').style.opacity = saverOn ? 1 : glOpacity;
+      if (saverOn) { paused = false; veilTo = 0; veilDur = 1.5; startLoop(); }
+      // a screen saver keeps changing: the leading screen moves through the scenes whatever the menu says
+      if (!follower) { if (saverOn) { if (autoBefore === null) autoBefore = auto; setAuto(true); } else if (autoBefore !== null) { setAuto(autoBefore); autoBefore = null; } }
+    },
+    // what the pulse detector hears right now, for the host's log
+    pulse: () => ({ ...audio.mod.info(), bpm: Math.round(F().bpm), look: lookNow, scene: SCENES[u.scene].name }),
     state: () => ({
       scene: u.scene, auto, palette: presetIx, paused, veil: +veil.toFixed(2), calm: +calm.toFixed(2), quiet: F().quiet,
       rms: +(audio.rms || 0).toFixed(4), bpm: Math.round(F().bpm), note: audio.tones.m.name, songState: songId.state,
       song: song ? song.title + ' / ' + song.artist : null, fps: Math.round(fpsNow), size: [renderer.W, renderer.H],
       canvas: [renderer.CW, renderer.CH], backdrop: hasBackdrop, err: renderer.lastError || null,
       label: $('wpLabel') ? $('wpLabel').textContent : null,
-      follower, pinned, rotating, BT: +u.BT.toFixed(2), K: u.K, hue: +base.C.toFixed(3), clock: +vt.toFixed(2), to: palette.to.a.concat(palette.to.d).map(v => +v.toFixed(3)),
+      follower, pinned, rotating, saver: saverOn, demoing: !!audio.demoing, BT: +u.BT.toFixed(2), K: u.K, hue: +base.C.toFixed(3), clock: +vt.toFixed(2), to: palette.to.a.concat(palette.to.d).map(v => +v.toFixed(3)),
       cur: palette.cur.a.concat(palette.cur.d).map(v => +v.toFixed(3)), art: follower ? followArt : artUrl,
+      look: { setting: lookSetting, now: lookNow, hinted, gain: +u.LG.toFixed(3), react: +lk.react.toFixed(2), pace: +lk.pace.toFixed(2) },
+      pulse: { ...audio.mod.info(), on: pulseOn, amp: +modAmp.toFixed(3), phase: +u.MODP.toFixed(2) }, flicker: meterReport(),
+      words: { on: wordsOn, palette: wordsOn && !follower ? wantedPalette(performance.now() / 1000).name : null, by: words.mood ? 'mood' : words.read ? words.read.by || null : null,
+        why: words.read ? words.read.why : null, mood: words.mood ? { valence: words.mood.valence, arousal: words.mood.arousal } : null,
+        moment: words.moment && performance.now() / 1000 < words.until ? words.moment.name : null },
       lyrics: { on: lyricsOn, showing: !!lyricKey, chars: lyricNow ? lyricNow.cur.length : 0, ...(follower ? {} : lyricSync.info(performance.now() / 1000)) },
     }),
     // the centre pixel as it is composited, alpha included (self-test: 0 alpha means the desktop shows through)
@@ -665,6 +862,8 @@ if (wallpaper) {
 const qScene = parseInt(params.get('scene'), 10);
 setScene(qScene >= 1 && qScene <= SCENES.length ? qScene - 1 : 0, { quiet: true });
 setAuto(auto);
+document.querySelectorAll('#look button').forEach(b => b.onclick = () => pickLook(b.dataset.look));
+syncLookButtons();
 updateNow();
 if (wallpaper) {
   body.classList.add('clean', 'wallpaper'); hiddenByUser = true; dock.classList.add('hidden');

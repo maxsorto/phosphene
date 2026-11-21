@@ -8,7 +8,7 @@ APP="build/Phosphene Wallpaper.app"
 rm -rf build
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources/web"
 swiftc -O -swift-version 5 -target "$(uname -m)-apple-macos14.2" Sources/*.swift \
-  -framework AppKit -framework WebKit -framework CoreAudio -framework AudioToolbox -framework ServiceManagement \
+  -framework AppKit -framework WebKit -framework CoreAudio -framework AudioToolbox -framework ServiceManagement -framework IOKit \
   -o "$APP/Contents/MacOS/PhospheneWallpaper"
 cp Info.plist "$APP/Contents/Info.plist"
 cp -R ../index.html ../favicon.svg ../apple-touch-icon.png ../src "$APP/Contents/Resources/web/"

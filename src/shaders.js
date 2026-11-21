@@ -107,6 +107,12 @@ const f = n => Number(n).toFixed(3);
 
 // The display pass reads the frame's mip chain: level 0 for the picture, the
 // middle levels for clarity and bloom, the top (1 x 1) level for exposure.
+// A look (Focus, Relax, Meditate, Sleep) quiets the picture here: LG brightness, LS saturation, LE how far
+// the edges of vision are stilled, LW warmth, LR how much of the beat still reaches the lens.
+// The pulse: when a steady modulation is found in the music (modlock.js), fine rings travel outward in
+// step with it. MODP is its phase, MODA its strength. It never goes into overall brightness: the rings
+// average out across the screen, and each pixel's swing is capped at 4.5% of its own value and 6% of full-scale luminance, under the
+// 10% that accessibility rules count as a flash (WCAG 2.3.1).
 // As a desktop wallpaper it also blends with the user's own wallpaper. BGA is how
 // much of that shows, from 1 (only the wallpaper) to 0 (only the picture). By
 // default the canvas simply goes transparent there, so the real desktop shows
@@ -114,10 +120,11 @@ const f = n => Number(n).toFixed(3);
 // drawn instead and pushed around as it gives way, so it seems to liquefy.
 export const DISPLAY_FS = COMMON + `
 uniform sampler2D BG; uniform float BGA, BGM; uniform vec2 BGS;
+uniform float LG, LS, LE, LW, LR, MODP, MODA;
 void main(){
   vec2 uv = gl_FragCoord.xy/R;
   vec2 cc = uv-.5; float r2 = dot(cc,cc);
-  uv = .5 + cc*(1. + .025*r2*(.5+.5*sin(BAR*TAU)) - .02*r2*DROP);      // the lens breathes with the bar
+  uv = .5 + cc*(1. + .025*r2*(.5+.5*sin(BAR*TAU))*LR - .02*r2*DROP);   // the lens breathes with the bar
   vec2 d = cc*(.003+.014*BEAT+.006*B+.012*DROP);
   vec3 c = vec3(textureLod(P,uv+d,0.).r, textureLod(P,uv,0.).g, textureLod(P,uv-d,0.).b);
   c = max(c + (c - textureLod(P,uv,3.).rgb)*.3, 0.);                     // clarity: lift detail over its surroundings
@@ -129,10 +136,19 @@ void main(){
   float ex = clamp(.9/(avg+.3), .3, 2.2);
   c = 1.-exp(-c*ex);
   l = dot(c,vec3(.299,.587,.114));
-  c = max(mix(vec3(l),c,1.45),0.);
+  c = max(mix(vec3(l),c,1.45*LS),0.);
   c = c*c*(3.-2.*c);
   c += (hash(gl_FragCoord.xy+fract(T))-.5)*.03;                          // grain
   c *= mix(.35,1.,smoothstep(1.1,.3,length(uv-.5)));
+  vec2 ar = cc*vec2(R.x/R.y,1.);
+  c *= LG*mix(1., smoothstep(.78,.14,length(ar*vec2(.6,1.))), LE*.75);    // a calm look dims and stills the edges of vision
+  c = mix(c, c*vec3(1.,.7,.36), LW);
+  if(MODA > .0005){                                                       // the pulse, as fine rings moving outward
+    float rr = length(ar) + .014*noise(ar*5.+T*.05);
+    float lum = dot(c,vec3(.299,.587,.114));
+    float amp = min(.045, .0136/pow(max(lum,.05),2.2));                   // 4.5% of the pixel, and never more than 6% of full-scale light
+    c *= 1. + MODA*amp*sin(TAU*(rr*26. - MODP))*smoothstep(.66,.22,rr);
+  }
   float cover = 1.;
   if(BGA > .001){                                         // the desktop wallpaper, giving way to the picture or coming back
     float m = 1.-BGA;

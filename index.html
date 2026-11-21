@@ -8,7 +8,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <title>Phosphene · Psychedelic audio visualizer</title>
-<meta name="description" content="A psychedelic audio visualizer that runs in your browser. Twenty-four GPU shader worlds that melt to Spotify, YouTube, your mic or any audio file, and name the song that is playing.">
+<meta name="description" content="A psychedelic audio visualizer that runs in your browser. Twenty-five GPU shader worlds that melt to Spotify, YouTube, your mic or any audio file, and name the song that is playing.">
 <meta property="og:title" content="Phosphene">
 <meta property="og:description" content="A psychedelic audio visualizer that runs in your browser.">
 <meta property="og:type" content="website">
@@ -125,9 +125,14 @@
     <div class="segmented" id="quality">
       <button data-q="auto" class="on">Auto</button><button data-q="low">Low</button><button data-q="medium">Med</button><button data-q="high">High</button>
     </div></div>
+  <div class="row"><span>Look <small>calm looks for music you work or rest to</small></span></div>
+  <div class="row"><div class="segmented" id="look">
+      <button data-look="auto">Auto</button><button data-look="music">Music</button><button data-look="focus">Focus</button><button data-look="relax">Relax</button><button data-look="meditate">Meditate</button><button data-look="sleep">Sleep</button>
+    </div></div>
   <div class="row"><span>Auto-cycle scenes</span><button class="switch on" id="autoSwitch" role="switch" aria-checked="true"><i></i></button></div>
   <div class="row"><span>Song ID <small>names what is playing</small></span><button class="switch on" id="idSwitch" role="switch" aria-checked="true"><i></i></button></div>
   <div class="row" id="lyricRow"><span>Lyrics <small>the words of the song, behind the picture</small></span><button class="switch" id="lyricSwitch" role="switch" aria-checked="false"><i></i></button></div>
+  <div class="row"><span>Colors from the words <small>the lyrics choose the palette: blue for a blue song, its mood otherwise</small></span><button class="switch on" id="wordSwitch" role="switch" aria-checked="true"><i></i></button></div>
   <div class="row"><span>Key colors <small>palette follows the musical key</small></span><button class="switch on" id="keySwitch" role="switch" aria-checked="true"><i></i></button></div>
   <div class="row links">
     <button class="link" id="changeSource">Change source</button>

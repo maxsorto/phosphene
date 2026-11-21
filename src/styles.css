@@ -130,6 +130,14 @@ body.welcome .np, body.clean:not(.np-on) .np { display: none; }
   font: 500 11px/1 var(--mono); letter-spacing: .22em; text-transform: uppercase; color: rgba(255, 255, 255, .86);
   text-shadow: 0 1px 10px rgba(0, 0, 0, .65), 0 0 2px rgba(0, 0, 0, .5);
 }
+/* the pulse readout: what the detector hears in the music, while it is locked */
+.wp-pulse {
+  position: fixed; left: calc(var(--inset-l, 0px) + 28px); bottom: calc(var(--inset-b, 0px) + 52px); pointer-events: none; opacity: 0; transition: opacity .8s var(--ease);
+  font: 500 11px/1 var(--mono); letter-spacing: .18em; text-transform: uppercase; color: rgba(255, 255, 255, .7); font-variant-numeric: tabular-nums;
+  text-shadow: 0 1px 10px rgba(0, 0, 0, .65), 0 0 2px rgba(0, 0, 0, .5);
+}
+.wp-pulse.show { opacity: 1; }
+#look button { padding: 5px 8px; }
 .wp-label.show { animation: wplabel 2.6s var(--ease) both; }
 @keyframes wplabel { 0% { opacity: 0; transform: translateY(6px); } 12%, 70% { opacity: 1; transform: none; } 100% { opacity: 0; transform: none; } }
 body.wallpaper .np { top: auto; bottom: calc(var(--inset-b, 0px) + 22px); right: calc(var(--inset-r, 0px) + 22px); }

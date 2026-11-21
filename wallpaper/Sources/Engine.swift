@@ -159,9 +159,17 @@ enum LyricLookup {
     }
 }
 
+/// The desktop window. As a screen saver it rises above everything and takes the keyboard, so the key press
+/// or click that dismisses it goes nowhere else.
+final class WallpaperWindow: NSWindow {
+    var takesKeys = false
+    override var canBecomeKey: Bool { takesKeys }
+    override var canBecomeMain: Bool { false }
+}
+
 final class WallpaperView: NSObject, WKScriptMessageHandler {
     let screen: NSScreen
-    let window: NSWindow
+    let window: WallpaperWindow
     let web: WKWebView
     private(set) var ready = false
     var visible = true                                   // false while a full-screen app or the lock screen covers it
@@ -188,7 +196,7 @@ final class WallpaperView: NSObject, WKScriptMessageHandler {
             unsafeBitCast(web.method(for: occlusion), to: Setter.self)(web, occlusion, false)
         }
 
-        window = NSWindow(contentRect: screen.frame, styleMask: .borderless, backing: .buffered, defer: false)
+        window = WallpaperWindow(contentRect: screen.frame, styleMask: .borderless, backing: .buffered, defer: false)
         window.level = NSWindow.Level(rawValue: Int(CGWindowLevelForKey(.desktopWindow)))   // above the wallpaper, below the icons
         window.collectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle, .fullScreenNone]
         window.isOpaque = false
@@ -219,6 +227,17 @@ final class WallpaperView: NSObject, WKScriptMessageHandler {
         let now = NSScreen.screens.first { ($0.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?.uint32Value == UInt32(displayID) } ?? screen
         let f = now.frame, v = now.visibleFrame
         return [f.maxY - v.maxY, f.maxX - v.maxX, v.minY - f.minY, v.minX - f.minX].map { max(0, Int($0.rounded())) }
+    }
+
+    /// Screen saver on: above every window, the Dock and the menu bar, on every Space. Off: back under the icons.
+    func setSaver(_ on: Bool) {
+        window.level = on ? .screenSaver : NSWindow.Level(rawValue: Int(CGWindowLevelForKey(.desktopWindow)))
+        window.collectionBehavior = on ? [.canJoinAllSpaces, .stationary, .ignoresCycle, .fullScreenAuxiliary]
+                                       : [.canJoinAllSpaces, .stationary, .ignoresCycle, .fullScreenNone]
+        window.ignoresMouseEvents = !on
+        window.takesKeys = on
+        window.backgroundColor = on ? .black : .clear
+        window.isOpaque = on
     }
 
     func show() { window.setFrame(screen.frame, display: false); window.orderFrontRegardless() }

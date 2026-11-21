@@ -11,6 +11,7 @@
 import { Features } from './features.js';
 import { Tones } from './tones.js';
 import { Spectrum } from './spectrum.js';
+import { ModLock } from './modlock.js';
 
 const CLEAN = { echoCancellation: false, noiseSuppression: false, autoGainControl: false };
 const ANA_FFT = 4096, TAP_SECONDS = 15;
@@ -47,6 +48,7 @@ export class AudioEngine {
     this.features = new Features(48000, ANA_FFT);
     this.tones = new Tones(48000, ANA_FFT);
     this.tapRate = 48000; this.tap = null; this.tapHead = 0; this.tapFilled = 0;
+    this.mod = new ModLock(48000);     // the pulse detector: a steady amplitude modulation in the mix (see modlock.js)
     this.onBeat = () => {};
     this.onEnded = () => {};
   }
@@ -69,7 +71,7 @@ export class AudioEngine {
       this.features = new Features(this.actx.sampleRate, ANA_FFT);
       for (const k of ['onBeat', 'onDrop', 'onKey', 'onTempoChange', 'onGap', 'onGrid']) this.features[k] = prev[k];   // keep the listeners
       const prevTones = this.tones; this.tones = new Tones(this.actx.sampleRate, ANA_FFT); this.tones.onNote = prevTones.onNote;
-      this.tapRate = this.actx.sampleRate;
+      this.tapRate = this.actx.sampleRate; this.mod = new ModLock(this.tapRate);
       this.tap = new Float32Array(Math.round(this.tapRate * TAP_SECONDS));
     }
     if (this.actx.state === 'suspended') this.actx.resume();
@@ -94,6 +96,7 @@ export class AudioEngine {
   }
 
   pushTap(chunk) {
+    this.mod.push(chunk, performance.now() / 1000);
     const t = this.tap, n = chunk.length, h = this.tapHead;
     if (h + n <= t.length) t.set(chunk, h);
     else { const k = t.length - h; t.set(chunk.subarray(0, k), h); t.set(chunk.subarray(k), 0); }
@@ -172,7 +175,7 @@ export class AudioEngine {
   useNative(rate = 48000) {
     this.stop();
     if (!this.spectrum || this.tapRate !== rate) {
-      this.tapRate = rate;
+      this.tapRate = rate; this.mod = new ModLock(rate);
       const pf = this.features; this.features = new Features(rate, ANA_FFT);
       for (const k of ['onBeat', 'onDrop', 'onKey', 'onTempoChange', 'onGap', 'onGrid']) this.features[k] = pf[k];
       const pt = this.tones; this.tones = new Tones(rate, ANA_FFT); this.tones.onNote = pt.onNote;
@@ -249,8 +252,15 @@ export class AudioEngine {
       // nothing arriving means the host has gone quiet: let the signal fall to silence
       if (now - this.lastPush > 0.12) this.pushTap(new Float32Array(Math.min(4096, Math.round(dt * this.tapRate))));
       const fr = this.frame; this.latest(fr);
-      for (let i = 0; i < 1024; i++) this.wave[i] = Math.max(0, Math.min(255, 128 + fr[ANA_FFT - 1024 + i] * 128));
-      this.spectrum.run(fr, this.db);
+      let e = 0; for (let i = ANA_FFT - 1024; i < ANA_FFT; i++) e += fr[i] * fr[i];
+      if (e > 1e-4) this.heardAt = now;                      // real sound from the Mac
+      // screen saver with nothing playing: the silent demo groove keeps the picture moving
+      this.demoing = !!this.idleDemo && now - (this.heardAt || 0) > 3;
+      if (this.demoing) this.demoSpectrum(now);
+      else {
+        for (let i = 0; i < 1024; i++) this.wave[i] = Math.max(0, Math.min(255, 128 + fr[ANA_FFT - 1024 + i] * 128));
+        this.spectrum.run(fr, this.db);
+      }
     } else {
       this.vis.getByteTimeDomainData(this.wave);
       this.ana.getFloatFrequencyData(this.db);

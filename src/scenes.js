@@ -702,4 +702,23 @@ vec3 scene(vec2 p){
   col += pal(tr*2.+C+.5)*.0025/(tr+.01)*(.3+1.2*B+.8*NOTE);
   return col*.7;
 }` },
+  // ------------------------------------------------------------ 25
+  // Made for music you work to: nothing here answers the beat. Light pools and drifts on dark water,
+  // and the tune only tints it. It is the scene the calm looks (Focus, Relax, Meditate, Sleep) open on.
+  { name: 'Stillwater', blurb: 'Light pooling on dark water. Made for music you work to', fb: { zoom: .04, swirl: .15, melt: 1.1, keep: .93 }, glsl: `
+vec3 scene(vec2 p){
+  float t = T*.22;
+  vec2 q = p*1.1;
+  q += .4*vec2(fbm3(q*.7+vec2(t*.21,-t*.17)), fbm3(q*.7+vec2(-t*.19,t*.23)+4.7)) - .2;   // a slow swell moves the whole surface
+  float h = fbm(q*1.3 + .1*t);
+  float h2 = fbm3(q*2.9 - .18*t + h);
+  float ca = pow(1.-abs(2.*fbm3(q*2.1+vec2(t*.27,-t*.11)+h*1.6)-1.), 3.);              // light gathers along the folds, like caustics
+  float ca2 = pow(1.-abs(2.*fbm3(q*4.3-vec2(t*.2,t*.31)+h2*1.2)-1.), 4.);
+  float tune = specb(MELX, 3.5)*MELV;                                                    // the melody's note warms it a little
+  vec3 deep = pal(C + .58 + .22*h)*.09;
+  vec3 lit = pal(C + .08 + .45*h2 + .1*(MEL-.5)*MELV);
+  vec3 c = deep + lit*(.07 + (.5*ca + .22*ca2)*smoothstep(.25,.8,h))*(.6 + .3*TONE + .3*tune);
+  c += pal(C + .32)*.05*smoothstep(.55,.95,h)*(.5+.5*M);
+  return c*1.45;
+}` },
 ];

@@ -7,6 +7,7 @@ import WebKit
 import CoreAudio
 import AVFoundation
 import ServiceManagement
+import IOKit.pwr_mgt
 
 private let defaults = UserDefaults.standard
 
@@ -32,6 +33,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var menuShot: String?, menuShotAfter = 10.0   // self-test: open the menu and save pictures of the app's own windows into this folder
     private var testScene: Int?                          // self-test: start on this scene instead of a random one
     private var testSkips = 0                            // self-test: press the skip button this many times
+    // Screen saver: after this long without input the picture takes over every screen until the next key or move.
+    private var saverActive = false, saverSince = 0.0, saverArmed = true
+    private var saverAssertion: IOPMAssertionID = 0, cursorHidden = false
+    private weak var appBeforeSaver: NSRunningApplication?
+    private var testSaverAfter = -1.0, testSaverFor = 0.0      // self-test: start the saver after this long, hold it this long whatever the input
+    private var testLook: String?, testReadout = false    // self-test: force a look, show the pulse readout
+    private var functionalHint = false                   // the source is a functional music app (Brain.fm): Auto goes calm at once
+    private var lookNowName = "music", pulseText: String?  // what the leading engine reports: the look in force, the pulse it hears
+    private var pulseLog: FileHandle?, pulseLogDay = ""   // the pulse log: a row every two seconds while music plays, one file a day
     private var pendingRandom = false                    // music just started: pick a fresh scene and palette once the engine is up
 
     // Asleep: your wallpaper, engine paused. Awake: the visualizer. Falling: melting back.
@@ -60,7 +70,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     func applicationDidFinishLaunching(_ note: Notification) {
         defaults.register(defaults: [
             "enabled": true, "source": "system", "sourceName": "", "auto": true, "scene": 0, "palette": -1,
-            "opacity": 1.0, "goo": 0.5, "melody": 1.0, "fps": 60, "allDisplays": true, "songId": true, "lyrics": true, "card": false, "stayOn": false, "randomStart": true, "skipButton": true,
+            "opacity": 1.0, "goo": 0.5, "melody": 1.0, "fps": 60, "allDisplays": true, "songId": true, "lyrics": true, "words": true, "card": false, "stayOn": false, "randomStart": true, "skipButton": true, "saverAfter": 180, "saverAwake": true, "look": "auto", "pulse": true, "readout": false, "pulseLog": false,
         ])
         var args = Array(CommandLine.arguments.dropFirst())
         while !args.isEmpty {
@@ -74,6 +84,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             else if a == "--test-palette-mode", !args.isEmpty { testPaletteMode = Int(args.removeFirst()) }
             else if a == "--menu-shot", !args.isEmpty { menuShot = args.removeFirst() }
             else if a == "--menu-shot-after", !args.isEmpty { menuShotAfter = Double(args.removeFirst()) ?? 10 }
+            else if a == "--test-saver", !args.isEmpty { testSaverAfter = Double(args.removeFirst()) ?? 5 }
+            else if a == "--test-saver-for", !args.isEmpty { testSaverFor = Double(args.removeFirst()) ?? 8 }
+            else if a == "--test-look", !args.isEmpty { testLook = args.removeFirst() }
+            else if a == "--test-readout" { testReadout = true }
             else if a == "--test-scene", !args.isEmpty { testScene = Int(args.removeFirst()) }
             else if a == "--test-palette-every", !args.isEmpty { testPaletteEvery = Double(args.removeFirst()) ?? 0 }
             else if a == "--test-audio", !args.isEmpty { testAudio = Self.decode(args.removeFirst(), rate: &testRate); testEnd = testAudio.count }
@@ -101,6 +115,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         every(1.0 / 60) { [weak self] in self?.pump() }
         every(3) { [weak self] in self?.followApp() }
         every(1) { [weak self] in self?.checkCover() }
+        every(3) { [weak self] in self?.updateHint() }
+        every(2) { [weak self] in self?.logPulse() }
+        every(0.25) { [weak self] in self?.saverTick() }
+        if testSaverAfter >= 0 {
+            DispatchQueue.main.asyncAfter(deadline: .now() + testSaverAfter) { [weak self] in self?.enterSaver() }
+            if testSaverFor > 0 { DispatchQueue.main.asyncAfter(deadline: .now() + testSaverAfter + testSaverFor) { [weak self] in self?.testSaverFor = 0; self?.exitSaver() } }
+        }
         if testSkips > 0 { every(2) { [weak self] in guard let self, self.mode == .awake, self.testSkips > 0, !self.sceneNames.isEmpty else { return }; self.testSkips -= 1; self.step(1); self.stepPalette(1) } }
         if menuShot != nil { DispatchQueue.main.asyncAfter(deadline: .now() + menuShotAfter) { [weak self] in self?.shootMenu() } }
         if statusFile != nil { every(1) { [weak self] in self?.writeStatus() } }
@@ -167,6 +188,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     /// Once a second: stop drawing on a display whose desktop cannot be seen, resume when it can.
     private func checkCover() {
+        guard !saverActive else { return }                              // as a screen saver it is on top of everything
         for v in views {
             let visible = !covered(v)
             guard visible != v.visible else { continue }
@@ -175,7 +197,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         updateRoles()
     }
-    @objc private func displaysSlept() { screensAsleep = true; views.forEach { $0.js("phospheneHost.setPaused(true)") } }
+    @objc private func displaysSlept() { exitSaver(); saverArmed = false; screensAsleep = true; views.forEach { $0.js("phospheneHost.setPaused(true)") } }
     @objc private func displaysWoke() { screensAsleep = false; if mode != .asleep { views.forEach { $0.js("phospheneHost.setPaused(\(!$0.visible))") } } }
 
     private func handle(_ view: WallpaperView, _ msg: [String: Any]) {
@@ -190,7 +212,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             guard primary, view.ready, let i = msg["index"] as? Int else { return }
             scene = i
             stepLabel?.stringValue = sceneTitle(i)
-            if !defaults.bool(forKey: "auto") { defaults.set(i, forKey: "scene") }
+            if !defaults.bool(forKey: "auto"), lookNowName == "music" { defaults.set(i, forKey: "scene") }   // a calm look's own scene is not the one you chose
         case "palette":
             guard primary, view.ready, let i = msg["index"] as? Int else { return }
             paletteNow = i
@@ -199,6 +221,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             guard primary, let look = msg["look"], JSONSerialization.isValidJSONObject(look),
                   let data = try? JSONSerialization.data(withJSONObject: look), let json = String(data: data, encoding: .utf8) else { return }
             for v in views where v !== view { v.js("phospheneHost.follow(\(json))") }
+            if let l = look as? [String: Any] {
+                lookNowName = l["lk"] as? String ?? "music"
+                pulseText = ((l["mod"] as? [String: Any])?["r"] as? NSNumber).map { String(format: "pulse %.1f Hz", $0.doubleValue) }
+            }
         case "asleep":
             if mode == .falling { finishSleep() }
         case "error":
@@ -220,7 +246,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         js += "phospheneHost.set('songid', \(primary && d.bool(forKey: "songId")));"
         js += "phospheneHost.set('lyrics', \(lyricsWanted));"            // every display: the others show the line the leader shows
         js += "phospheneHost.set('card', \(d.bool(forKey: "card")));"
+        js += "phospheneHost.set('words', \(d.bool(forKey: "words")));"
         js += "phospheneHost.set('stayOn', \(stayOn));"
+        js += "phospheneHost.set('look', '\(testLook ?? d.string(forKey: "look") ?? "auto")');phospheneHost.set('hint', \(functionalHint));"
+        js += "phospheneHost.set('pulse', \(d.bool(forKey: "pulse")));phospheneHost.set('readout', \(d.bool(forKey: "readout") || testReadout));"
+        if statusFile != nil { js += "phospheneHost.set('meter', true);" }
         js += Self.insetsCall(view)
         js += "phospheneHost.setAuto(\(primary && d.bool(forKey: "auto")));"
         if !d.bool(forKey: "auto") { js += "phospheneHost.setScene(\(d.integer(forKey: "scene")));" } else if !primary { js += "phospheneHost.setScene(\(scene));" }
@@ -248,6 +278,53 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if Set(objects) != Set(tapped ?? []) { startAudio() }
     }
 
+    // MARK: Pulse log
+
+    private static var pulseLogFolder: URL {
+        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("Phosphene Wallpaper/Pulse logs", isDirectory: true)
+    }
+    /// Every two seconds while music plays: ask the leading engine what pulse it hears and add a row to today's file.
+    /// Only numbers are kept (rate, depth, tempo and so on). No audio is ever written.
+    private func logPulse() {
+        guard defaults.bool(forKey: "pulseLog"), mode == .awake, let v = leader, v.ready else { return }
+        v.js("JSON.stringify(phospheneHost.pulse())") { [weak self] value in
+            guard let self, let text = value as? String, let o = (try? JSONSerialization.jsonObject(with: Data(text.utf8))) as? [String: Any] else { return }
+            let now = Date(), day = DateFormatter(), clock = DateFormatter()
+            day.dateFormat = "yyyy-MM-dd"; clock.dateFormat = "HH:mm:ss"
+            if day.string(from: now) != self.pulseLogDay || self.pulseLog == nil {
+                try? self.pulseLog?.close()
+                let folder = Self.pulseLogFolder, file = folder.appendingPathComponent("pulse-\(day.string(from: now)).csv")
+                try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+                if !FileManager.default.fileExists(atPath: file.path) {
+                    try? "time,source,look,scene,locked,rate_hz,depth,mid_band_seconds,high_band_ratio,prominence,strongest_line_hz,held_seconds,phase_error,tempo_bpm\n".write(to: file, atomically: true, encoding: .utf8)
+                }
+                self.pulseLog = try? FileHandle(forWritingTo: file); _ = try? self.pulseLog?.seekToEnd()
+                self.pulseLogDay = day.string(from: now)
+            }
+            func n(_ key: String) -> String { (o[key] as? NSNumber).map { "\($0)" } ?? "" }
+            func q(_ s: String) -> String { "\"" + s.replacingOccurrences(of: "\"", with: "'") + "\"" }
+            let what = self.source == "system" ? "Everything" : (self.defaults_sourceName ?? self.source)
+            let row = [clock.string(from: now), q(what), o["look"] as? String ?? "", q(o["scene"] as? String ?? ""), (o["locked"] as? Bool) == true ? "1" : "0",
+                       n("rate"), n("depth"), n("narrow"), n("high"), n("prom"), n("raw"), n("held"), n("err"), n("bpm")].joined(separator: ",") + "\n"
+            try? self.pulseLog?.write(contentsOf: Data(row.utf8))
+        }
+    }
+    private var defaults_sourceName: String? { let s = defaults.string(forKey: "sourceName") ?? ""; return s.isEmpty ? nil : s }
+    @objc private func revealPulseLogs() {
+        try? FileManager.default.createDirectory(at: Self.pulseLogFolder, withIntermediateDirectories: true)
+        NSWorkspace.shared.open(Self.pulseLogFolder)
+    }
+
+    /// Is the app being listened to one that plays functional music? Then the Auto look goes calm without waiting to hear it.
+    private func updateHint() {
+        func functional(_ app: AudioApp) -> Bool { let s = (app.bundleID + " " + app.name).lowercased(); return s.contains("brain.fm") || s.contains("brainfm") }
+        let apps = CoreAudioQuery.apps()
+        let on = source == "system" ? apps.contains { $0.playing && functional($0) } : source != "off" && (apps.first { $0.bundleID == source }.map(functional) ?? false)
+        guard on != functionalHint else { return }
+        functionalHint = on
+        views.forEach { $0.js("phospheneHost.set('hint', \(on))") }
+    }
+
     /// Sixty times a second: take what the tap heard, decide whether music is playing, pass it to the engine.
     private func pump() {
         let now = CACurrentMediaTime(), dt = min(0.25, now - lastTick); lastTick = now
@@ -265,11 +342,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         switch mode {
         case .asleep: if loudRun >= 0.8 || stayOn { pendingRandom = true; wake() }          // most of a second of sound, so a notification ping does not count
-        case .awake: if !stayOn && now - lastLoud > 4 { fall() }
+        case .awake: if !stayOn && !saverActive && now - lastLoud > 4 { fall() }
         case .falling:
             if loudRun >= 0.3 { wake() } else if now - fallingSince > 6 { finishSleep() }
         }
-        guard mode != .asleep, !samples.isEmpty else { return }
+        guard mode != .asleep || saverActive, !samples.isEmpty else { return }
         var pcm = [Int16](repeating: 0, count: samples.count)
         for i in 0..<samples.count { pcm[i] = Int16(max(-32768, min(32767, samples[i] * 32767))) }
         let b64 = pcm.withUnsafeBufferPointer { Data(buffer: $0) }.base64EncodedString()
@@ -282,12 +359,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         guard pendingRandom, !sceneNames.isEmpty, !paletteNames.isEmpty else { return }
         pendingRandom = false
         if let s = testScene { scene = s; leader?.js("phospheneHost.setScene(\(s))"); return }
+        if !defaults.bool(forKey: "randomStart") { leader?.js("phospheneHost.start(\(scene))") }   // a calm look still opens on one of its own scenes
         guard defaults.bool(forKey: "randomStart") else { return }
         var s = Int.random(in: 0..<sceneNames.count), p = Int.random(in: 0..<paletteNames.count)
         if sceneNames.count > 1 { while s == scene { s = Int.random(in: 0..<sceneNames.count) } }
         if paletteNames.count > 1 { while p == paletteMode { p = Int.random(in: 0..<paletteNames.count) } }
         scene = s; defaults.set(s, forKey: "scene")
-        leader?.js("phospheneHost.setScene(\(s))")
+        leader?.js("phospheneHost.start(\(s))")
         if paletteMode < 0 { leader?.js("phospheneHost.showPreset(\(p))") }       // palettes rotate: just start somewhere new
         else { defaults.set(p, forKey: "palette"); views.forEach { $0.js("phospheneHost.setPalette(\(p))") } }
     }
@@ -308,7 +386,96 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
     private func finishSleep() {
         mode = .asleep
+        guard !saverActive else { return }                              // the screen saver keeps the picture up through silence
         for v in views { v.js("phospheneHost.setPaused(true)"); v.hide() }
+    }
+
+    // MARK: Screen saver
+
+    /// Seconds since the last key, click or pointer move anywhere.
+    private var idleSeconds: Double { CGEventSource.secondsSinceLastEventType(.combinedSessionState, eventType: CGEventType(rawValue: ~0)!) }
+
+    /// Is someone watching something? Another app is holding the display awake (a film, a call, a presentation)
+    /// and a window fills a display. Music playing in an ordinary window does not count.
+    private func watchingSomething() -> Bool {
+        var byProcess: Unmanaged<CFDictionary>?
+        guard IOPMCopyAssertionsByProcess(&byProcess) == kIOReturnSuccess, let all = byProcess?.takeRetainedValue() as? [NSNumber: [[String: Any]]] else { return false }
+        let me = ProcessInfo.processInfo.processIdentifier
+        let held = all.contains { pid, list in
+            pid.int32Value != me && list.contains { ($0[kIOPMAssertionTypeKey] as? String) == (kIOPMAssertionTypePreventUserIdleDisplaySleep as String) || ($0[kIOPMAssertionTypeKey] as? String) == "NoDisplaySleepAssertion" }
+        }
+        return held && views.contains { covered($0) }
+    }
+
+    private func saverTick() {
+        if saverActive {
+            if testSaverFor <= 0, CACurrentMediaTime() - saverSince > 1.5, idleSeconds < 1 { exitSaver() }
+            return
+        }
+        let after = defaults.double(forKey: "saverAfter")
+        guard enabled, after > 0, !screensAsleep, !views.isEmpty, views.contains(where: { $0.ready }) else { return }
+        let idle = idleSeconds
+        if idle < after { saverArmed = true; return }                   // seen again: it may start the next time they go idle
+        guard saverArmed, !watchingSomething() else { return }
+        enterSaver()
+    }
+
+    private func enterSaver() {
+        guard !saverActive, !views.isEmpty else { return }
+        saverActive = true; saverArmed = false; saverSince = CACurrentMediaTime()
+        appBeforeSaver = NSWorkspace.shared.frontmostApplication
+        for v in views {
+            v.visible = true
+            v.setSaver(true); v.show()
+            v.js(Self.insetsCall(v) + "phospheneHost.saver(true)")
+        }
+        NSApp.activate(ignoringOtherApps: true)                         // take the keyboard, so the key that wakes it types nowhere
+        views.first?.window.makeKeyAndOrderFront(nil)
+        if defaults.bool(forKey: "saverAwake") {                        // hold the display (and so the Mac) awake while it runs
+            IOPMAssertionCreateWithName(kIOPMAssertionTypePreventUserIdleDisplaySleep as CFString, IOPMAssertionLevel(kIOPMAssertionLevelOn),
+                                        "Phosphene screen saver" as CFString, &saverAssertion)
+        }
+        setCursorHidden(true)
+        updateRoles()
+    }
+
+    private func exitSaver() {
+        guard saverActive else { return }
+        saverActive = false
+        if saverAssertion != 0 { IOPMAssertionRelease(saverAssertion); saverAssertion = 0 }
+        setCursorHidden(false)
+        for v in views { v.setSaver(false); v.js("phospheneHost.saver(false)") }
+        if let app = appBeforeSaver, !app.isTerminated { app.activate() }
+        let now = CACurrentMediaTime()
+        if mode == .awake, stayOn || now - lastLoud <= 4 {              // music is playing: carry on as the wallpaper
+            for v in views { v.visible = !covered(v); v.show(); if !v.visible { v.js("phospheneHost.setPaused(true)") } }
+        } else {                                                        // nothing playing: melt back to the desktop
+            mode = .falling; fallingSince = now
+            views.forEach { $0.show(); $0.js("phospheneHost.sleep(1.2)") }
+        }
+        updateRoles()
+    }
+
+    /// A background app may hide the pointer only after asking the window server for the right.
+    private func setCursorHidden(_ hidden: Bool) {
+        guard hidden != cursorHidden else { return }
+        cursorHidden = hidden
+        typealias Connection = @convention(c) () -> Int32
+        typealias SetProperty = @convention(c) (Int32, Int32, CFString, CFTypeRef) -> Int32
+        let h = dlopen(nil, RTLD_NOW)
+        if let c = dlsym(h, "_CGSDefaultConnection"), let p = dlsym(h, "CGSSetConnectionProperty") {
+            let cid = unsafeBitCast(c, to: Connection.self)()
+            _ = unsafeBitCast(p, to: SetProperty.self)(cid, cid, "SetsCursorInBackground" as CFString, kCFBooleanTrue)
+        }
+        if hidden { CGDisplayHideCursor(CGMainDisplayID()) } else { CGDisplayShowCursor(CGMainDisplayID()) }
+    }
+
+    @objc private func startSaverNow() {                                // from the menu: after the click and the pointer have settled
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in self?.enterSaver() }
+    }
+    @objc private func pickSaver(_ item: NSMenuItem) {
+        guard let seconds = item.representedObject as? Int else { return }
+        defaults.set(seconds, forKey: "saverAfter")
     }
 
     // MARK: Menu
@@ -321,6 +488,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let what = source == "system" ? "Everything this Mac plays" : source == "off" ? "Nothing" : (apps.first { $0.bundleID == source }?.name ?? d.string(forKey: "sourceName") ?? source)
         var state = !enabled ? "Off" : mode == .awake ? "Playing" : mode == .falling ? "Fading out" : "Waiting for music"
         if enabled, source != "off", source != "system", !(apps.contains { $0.bundleID == source }) { state = "Waiting for it to open" }
+        if mode == .awake, lookNowName != "music" { state = lookNowName.capitalized + " look" + (pulseText.map { "  ·  " + $0 } ?? "") }
         if let e = tap.lastError { state = e }
         add(menu, "\(what)  ·  \(state)", enabled: false)
         add(menu, "On", #selector(toggle(_:)), on: enabled, key: "enabled")
@@ -349,10 +517,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         for (i, name) in sceneNames.enumerated() { add(scenes, String(format: "%02d  %@", i + 1, name), #selector(pickScene(_:)), on: i == scene, represented: i) }
 
         let palettes = submenu(menu, "Palette")
+        add(palettes, "Colours from the song's words", #selector(toggle(_:)), on: d.bool(forKey: "words"), enabled: d.bool(forKey: "songId"), key: "words")
+        palettes.addItem(.separator())
         add(palettes, "Change with the scenes", #selector(pickPalette(_:)), on: paletteMode == -1, represented: -1)
         add(palettes, "Change every so often", #selector(pickPalette(_:)), on: paletteMode == -2, represented: -2)
         palettes.addItem(.separator())
         for (i, name) in paletteNames.enumerated() { add(palettes, name, #selector(pickPalette(_:)), on: paletteMode == i, represented: i) }
+
+        let looks = submenu(menu, "Look")
+        let look = d.string(forKey: "look") ?? "auto"
+        add(looks, "Auto: calm when it hears focus music", #selector(pickLook(_:)), on: look == "auto", represented: "auto")
+        looks.addItem(.separator())
+        for (id, title) in [("music", "Music"), ("focus", "Focus"), ("relax", "Relax"), ("meditate", "Meditate"), ("sleep", "Sleep")] {
+            add(looks, title, #selector(pickLook(_:)), on: look == id, represented: id)
+        }
+        looks.addItem(.separator())
+        add(looks, "Carry the pulse on screen", #selector(toggle(_:)), on: d.bool(forKey: "pulse"), key: "pulse")
+        add(looks, "Show the pulse readout", #selector(toggle(_:)), on: d.bool(forKey: "readout"), key: "readout")
+        add(looks, "Keep a log of the pulse", #selector(toggle(_:)), on: d.bool(forKey: "pulseLog"), key: "pulseLog")
+        add(looks, "Show the logs in Finder", #selector(revealPulseLogs))
 
         menu.addItem(.separator())
         menu.addItem(slider("Opacity", key: "opacity", min: 0.25, max: 1))
@@ -360,6 +543,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.addItem(slider("Melody", key: "melody", min: 0, max: 2))
         menu.addItem(.separator())
 
+        let saver = submenu(menu, "Screen saver")
+        add(saver, "Start now", #selector(startSaverNow))
+        saver.addItem(.separator())
+        let after = d.integer(forKey: "saverAfter")
+        add(saver, "Off", #selector(pickSaver(_:)), on: after <= 0, represented: 0)
+        for m in [1, 2, 3, 5, 10, 20] { add(saver, "After \(m) minute\(m == 1 ? "" : "s") idle", #selector(pickSaver(_:)), on: after == m * 60, represented: m * 60) }
+        saver.addItem(.separator())
+        add(saver, "Keep the Mac awake while it runs", #selector(toggle(_:)), on: d.bool(forKey: "saverAwake"), key: "saverAwake")
         let silence = submenu(menu, "When the music stops")
         add(silence, "Show my wallpaper", #selector(pickStay(_:)), on: !d.bool(forKey: "stayOn"), represented: false)
         add(silence, "Keep drifting slowly", #selector(pickStay(_:)), on: d.bool(forKey: "stayOn"), represented: true)
@@ -412,7 +603,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         case "auto": leader?.js("phospheneHost.setAuto(\(on))"); if !on { defaults.set(scene, forKey: "scene") }
         case "songId": leader?.js("phospheneHost.set('songid', \(on))"); views.forEach { $0.js("phospheneHost.set('lyrics', \(lyricsWanted))") }
         case "lyrics": views.forEach { $0.js("phospheneHost.set('lyrics', \(lyricsWanted))") }
+        case "words": views.forEach { $0.js("phospheneHost.set('words', \(on))") }
         case "skipButton": updateSkipItem()
+        case "pulse", "readout": views.forEach { $0.js("phospheneHost.set('\(key)', \(on))") }
         case "card": views.forEach { $0.js("phospheneHost.set('card', \(on))") }
         default: break
         }
@@ -499,15 +692,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let n = paletteNames.count
         paletteNow = ((paletteNow + dir) % n + n) % n
         if paletteMode >= 0 {
-            defaults.set(paletteNow, forKey: "palette"); views.forEach { $0.js("phospheneHost.setPalette(\(paletteNow))") }
-        } else { leader?.js("phospheneHost.showPreset(\(paletteNow))") }
+            defaults.set(paletteNow, forKey: "palette"); views.forEach { $0.js("phospheneHost.setPalette(\(paletteNow), true)") }
+        } else { leader?.js("phospheneHost.showPreset(\(paletteNow), true)") }
         announce(paletteTitle(paletteNow)); paletteLabel?.stringValue = paletteTitle(paletteNow)
     }
     @objc private func pickPalette(_ item: NSMenuItem) {
         guard let i = item.representedObject as? Int else { return }
         defaults.set(i, forKey: "palette")
-        views.forEach { $0.js("phospheneHost.setPalette(\(i))") }
+        views.forEach { $0.js("phospheneHost.setPalette(\(i), true)") }
         if i >= 0 { paletteNow = i; announce(paletteTitle(i)) }
+    }
+    @objc private func pickLook(_ item: NSMenuItem) {
+        guard let id = item.representedObject as? String else { return }
+        defaults.set(id, forKey: "look")
+        views.forEach { $0.js("phospheneHost.set('look', '\(id)')") }
     }
     @objc private func pickStay(_ item: NSMenuItem) {
         guard let on = item.representedObject as? Bool else { return }
@@ -590,6 +788,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private func writeStatus() {
         guard let path = statusFile else { return }
         let native: [String: Any] = [
+            "saver": saverActive, "idle": idleSeconds.rounded(), "saverAfter": defaults.double(forKey: "saverAfter"), "awakeHeld": saverAssertion != 0,
+            "windowLevel": views.first.map { $0.window.level.rawValue } ?? 0,
             "mode": mode.rawValue, "level": Double(level), "everLoud": everLoud, "source": source, "tapRunning": tap.running,
             "tapError": tap.lastError ?? NSNull(), "engineErrors": engineErrors, "rate": tap.sampleRate, "views": views.count, "ready": views.filter { $0.ready }.count,
             "visible": views.map { $0.visible }, "covered": views.map { covered($0) },

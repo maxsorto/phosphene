@@ -8,7 +8,7 @@ import { VS, DISPLAY_FS, OVERLAYS, POINTS_FS, SCENES, sceneSource } from './shad
 import { LS } from './tones.js';
 
 const F1 = ['T', 'B', 'M', 'H', 'BEAT', 'K', 'Z', 'C', 'TR', 'KICK', 'SNARE', 'HAT', 'PH', 'BAR', 'BT', 'BPM', 'EN', 'DROP', 'BP',
-  'GOO', 'IRID', 'ARTC', 'MEL', 'NOTE', 'MELV', 'MELH', 'TONE', 'SP', 'ARM'];
+  'GOO', 'IRID', 'ARTC', 'MEL', 'NOTE', 'MELV', 'MELH', 'TONE', 'SP', 'ARM', 'LG', 'LS', 'LE', 'LW', 'LR', 'MODP', 'MODA'];
 const F3 = ['PA', 'PB', 'PF', 'PD'];
 const SAMPLERS = ['P', 'F', 'ECG', 'W', 'SG', 'ART', 'CH', 'BG'];
 const SG_ROWS = 256, SG_W = 256, SG_INTERVAL = 1 / 30, HIST_AT = 224;
@@ -267,6 +267,17 @@ export class Renderer {
     gl.bindFramebuffer(gl.FRAMEBUFFER, null); gl.viewport(0, 0, this.CW, this.CH);
     gl.drawArrays(gl.TRIANGLES, 0, 3);
     this.bufs = [dst, src];
+  }
+
+  // A row of pixels across the middle of what was just drawn, as linear luminance (the flicker meter reads it).
+  strip(out) {
+    const gl = this.gl, n = out.length, px = this.stripPx && this.stripPx.length === n * 4 ? this.stripPx : (this.stripPx = new Uint8Array(n * 4));
+    const step = Math.max(1, Math.floor(this.CW / n)), x0 = (this.CW - step * n) >> 1, y = this.CH >> 1;
+    if (step === 1) gl.readPixels(Math.max(0, x0), y, n, 1, gl.RGBA, gl.UNSIGNED_BYTE, px);
+    else { const row = this.stripRow && this.stripRow.length === this.CW * 4 ? this.stripRow : (this.stripRow = new Uint8Array(this.CW * 4));
+      gl.readPixels(0, y, this.CW, 1, gl.RGBA, gl.UNSIGNED_BYTE, row); for (let i = 0; i < n; i++) px.set(row.subarray((x0 + i * step) * 4, (x0 + i * step) * 4 + 4), i * 4); }
+    const lin = v => { v /= 255; return v <= 0.04045 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); };
+    for (let i = 0; i < n; i++) out[i] = 0.2126 * lin(px[4 * i]) + 0.7152 * lin(px[4 * i + 1]) + 0.0722 * lin(px[4 * i + 2]);
   }
 
   // Milliseconds of GPU time per frame for one scene (debugging: ?debug then phosphene.bench()).

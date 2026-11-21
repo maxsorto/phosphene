@@ -2,14 +2,22 @@
 # Builds "Phosphene Wallpaper.app" next to this script (in build/). Needs Xcode's
 # command line tools. The engine is copied in from the repository: the app runs
 # exactly the files the website serves.   ./build.sh [--run]
+#   ./build.sh --release   a copy for other Macs: Apple silicon and Intel in one app, signed ad hoc (never with
+#                          this Mac's local identity), zipped to dist/Phosphene-Wallpaper.zip for a GitHub release
 set -e
 cd "$(dirname "$0")"
 APP="build/Phosphene Wallpaper.app"
 rm -rf build
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources/web"
-swiftc -O -swift-version 5 -target "$(uname -m)-apple-macos14.2" Sources/*.swift \
-  -framework AppKit -framework WebKit -framework CoreAudio -framework AudioToolbox -framework ServiceManagement -framework IOKit \
-  -o "$APP/Contents/MacOS/PhospheneWallpaper"
+RELEASE=0; [[ "$1" == "--release" ]] && RELEASE=1
+compile() { swiftc -O -swift-version 5 -target "$1-apple-macos14.2" Sources/*.swift \
+  -framework AppKit -framework WebKit -framework CoreAudio -framework AudioToolbox -framework ServiceManagement -framework IOKit -o "$2"; }
+if (( RELEASE )); then
+  compile arm64 build/arm64; compile x86_64 build/x86_64
+  lipo -create build/arm64 build/x86_64 -output "$APP/Contents/MacOS/PhospheneWallpaper"; rm build/arm64 build/x86_64
+else
+  compile "$(uname -m)" "$APP/Contents/MacOS/PhospheneWallpaper"
+fi
 cp Info.plist "$APP/Contents/Info.plist"
 cp -R ../index.html ../favicon.svg ../apple-touch-icon.png ../src "$APP/Contents/Resources/web/"
 # an icon from the site's touch icon
@@ -22,6 +30,15 @@ iconutil -c icns $ICONS -o "$APP/Contents/Resources/AppIcon.icns" 2>/dev/null ||
 rm -rf $ICONS
 # Sign with the local identity if ./setup-signing.sh has been run: the app then keeps the same identity across
 # rebuilds, so macOS keeps its audio permission. Otherwise sign ad hoc (macOS asks again after every rebuild).
+if (( RELEASE )); then
+  find "$APP" -name .DS_Store -delete
+  codesign --force -s - "$APP" >/dev/null 2>&1
+  mkdir -p dist; rm -f dist/Phosphene-Wallpaper.zip
+  ditto -c -k --keepParent "$APP" dist/Phosphene-Wallpaper.zip
+  rm -rf build                                   # so the next ./build.sh --run never picks up this unsigned copy by mistake
+  echo "Built wallpaper/dist/Phosphene-Wallpaper.zip (Apple silicon and Intel, ad-hoc signed)"
+  exit 0
+fi
 NAME="Phosphene Wallpaper Local Signing"
 KEYCHAIN="$HOME/Library/Keychains/phosphene-signing.keychain-db"
 PASSFILE="$HOME/Library/Application Support/Phosphene Wallpaper/signing-keychain-password"

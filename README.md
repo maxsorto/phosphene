@@ -6,7 +6,7 @@ A psychedelic audio visualizer that runs in your browser, and as the living wall
 
 It listens like a musician. It finds the tempo and locks onto the beat, counts bars so scene changes land on the downbeat, tells kicks from snares from hats, notices drops, and works out the key. And it follows the **melody**: every scene gets a semitone-resolution spectrum, the twelve notes of the scale and the pitch of the tune itself, so the shapes move with the notes and not only with the drums. It can also name the song that is playing, Shazam-style, and pull the album's colours into the picture.
 
-<p align="center"><b>Open it: <a href="https://phosphene-viz.vercel.app">phosphene-viz.vercel.app</a></b><br>Desktop Chrome, Edge or Arc for tab audio. Phones work with the mic.</p>
+<p align="center"><b>Open it: <a href="https://phosphene-viz.vercel.app">phosphene-viz.vercel.app</a></b><br>Desktop Chrome, Edge or Arc for tab audio. Phones work with the mic.<br><b><a href="https://github.com/maxsorto/phosphene/releases/latest/download/Phosphene-Wallpaper.zip">Download the Mac app</a></b> (free, macOS 14.2 or later)</p>
 
 ## The desktop wallpaper (Mac)
 
@@ -36,12 +36,18 @@ The best way to live with Phosphene: a small menu bar app that turns your Mac's 
 - **Calm looks for music you work to.** Focus, Relax, Meditate and Sleep (the Look menu) turn the visualizer into something you can leave on while you work or rest: the drums stop reaching the picture, everything slows, the edges of vision go still, scenes change rarely and by fading, and no song is looked up. Left on Auto it turns to Focus by itself when it hears focus music, and back when ordinary music returns. See [Looks and the pulse](#looks-and-the-pulse).
 - **It stays out of the way.** It pauses when the desktop is covered by a full-screen app, when the displays sleep and when the screen is locked, and drops to 20 frames a second in silence if you ask it to stay on.
 
+**[Download Phosphene for Mac](https://github.com/maxsorto/phosphene/releases/latest/download/Phosphene-Wallpaper.zip)** (free; macOS 14.2 or later; Apple silicon or Intel). Unzip it and drag **Phosphene Wallpaper** to Applications. It is not from the App Store and not notarized, so the first time you open it macOS refuses: open System Settings › Privacy & Security, scroll to the message about Phosphene Wallpaper and click **Open Anyway**. It lives in the menu bar, not the Dock.
+
+Or build it yourself:
+
 ```sh
 cd wallpaper
 ./build.sh --run
 ```
 
 That needs Xcode's command line tools and macOS 14.2 or later. The first time it listens, macOS asks to let it record system audio: that is the permission for hearing what the Mac plays. Nothing is recorded; the samples are analysed in memory, and with Song ID on, only the usual fingerprint leaves the Mac. To keep it, drag `wallpaper/build/Phosphene Wallpaper.app` to Applications and turn on "Open at login" in its menu.
+
+To make the download, `./build.sh --release` builds one app for Apple silicon and Intel, signs it ad hoc and zips it to `wallpaper/dist/Phosphene-Wallpaper.zip`; attach that file, under that name, to a GitHub release and the website's download link (which always points at the latest release) picks it up.
 
 Run `./setup-signing.sh` once before building if you plan to rebuild. It creates a self-signed signing identity in its own keychain, used only for this app. Without it the app is ad-hoc signed, every rebuild looks like a new app to macOS, and the audio permission is asked for again each time.
 

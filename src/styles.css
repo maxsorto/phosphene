@@ -64,6 +64,18 @@ canvas#gl { position: fixed; inset: 0; width: 100vw; height: 100vh; display: blo
 .source-sub { color: var(--label-2); font-size: 13px; line-height: 1.35; }
 .badge { font: 400 9.5px/1 var(--mono); font-style: normal; letter-spacing: .22em; text-transform: uppercase;
   padding: 4px 6px 4px 8px; border-radius: 4px; border: 1px solid rgba(255, 255, 255, .3); color: var(--label-2); }
+.macapp {
+  display: flex; gap: 14px; align-items: center; margin-top: 10px; padding: 16px; border-radius: 20px; text-decoration: none; color: inherit;
+  background: var(--fill); border: 1px solid var(--stroke); transition: background .2s, transform .25s var(--ease);
+}
+.macapp:hover { background: var(--fill-hover); transform: translateY(-2px); }
+.macapp:active { transform: scale(.98); }
+.macapp .source-text { flex: 1; }
+.macapp-go { flex: none; padding: 9px 16px; border-radius: 999px; background: var(--ink); color: #0a0a0c; font-size: 13px; font-weight: 600; }
+.macapp-note { margin: 8px 4px 0; color: var(--label-3); font-size: 11.5px; font-weight: 300; line-height: 1.45; }
+.macapp-note a { color: var(--label-2); text-decoration: none; white-space: nowrap; }
+.macapp-note a:hover { color: var(--label); }
+.row.links a.link { text-decoration: none; }
 .fine { margin: 22px 0 0; color: var(--label-3); font-size: 12px; font-weight: 300; }
 .fine a { color: var(--label-2); text-decoration: none; margin-left: 6px; white-space: nowrap; }
 .fine a:hover { color: var(--label); }
@@ -284,6 +296,9 @@ body.clean .dock, body.clean .toast, body.clean .sheet-welcome { display: none; 
   .welcome-card { padding: 26px 18px 20px; border-radius: 28px; }
   .sources { grid-template-columns: 1fr; }
   .source { padding: 13px; }
+  .macapp { flex-wrap: wrap; padding: 13px; }
+  .macapp .source-text { flex: 1 1 calc(100% - 54px); }
+  .macapp-go { margin-left: 54px; }
   .dock { grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "now actions" "scene scene" "prog prog"; border-radius: 22px; }
   .now { grid-area: now; } .actions { grid-area: actions; } .scene-switch { grid-area: scene; justify-content: space-between; border-top: 1px solid var(--stroke); padding-top: 6px; }
   .scene-meta { flex: 1; }
